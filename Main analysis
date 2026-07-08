@@ -1,1 +1,590 @@
+library(readr)
+library(tidyverse)
+library(haven)
+library(naniar)
+library(dplyr)
+library(survival)
+library(doBy)
+library(flexsurv)
+
+df <- source("load_hrs_data.R")
+df_ration <- df %>% filter(stage==0|stage==1)#3772
+df_ration1 <- df_ration %>% filter(!is.na(byr)) %>% filter(!is.na(sex)) %>% filter(!is.na(ethnic)) %>% filter(!is.na(state)) %>%
+  filter(!is.na(syr)) %>% filter(!is.na(bmo)) #2680
+
+class(df_ration1$sex)
+df_ration1$sex <- factor(df_ration1$sex,ordered = FALSE)
+df_ration1$ethnic <- factor(df_ration1$ethnic,ordered = FALSE)
+df_ration1$bornUS <- factor(df_ration1$bornUS,ordered = FALSE)
+df_ration1$marriage <- as.factor(recodeVar(df_ration1$marriage,c(1,3,4,5,6,7),c(1,2,2,2,2,2)))
+df_ration1$education <- as.factor(recodeVar(df_ration1$education,c(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,97),
+                                             c(0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0)))
+df_ration1$state <- as.factor(recodeVar(df_ration1$state,c(1,2,3,4,5,6,7,8,9),c(1,1,2,2,3,3,3,4,4)))
+
+df1 <- source("load_hrs_data_1.R")
+
+df_ration1.1 <- df_ration1 %>% left_join(df1)
+
+df_ration1.1.1 <- df_ration1.1 %>% mutate(
+  his_hbp = case_when(
+    HHID_PN %in% id98 ~ hbp98,
+    HHID_PN %in% id00 ~ hbp00,
+    HHID_PN %in% id02 ~ hbp02,
+    HHID_PN %in% id04 ~ hbp04,
+    HHID_PN %in% id06 ~ hbp06,
+    HHID_PN %in% id08 ~ hbp08,
+    HHID_PN %in% id10 ~ hbp10,
+    HHID_PN %in% id12 ~ hbp12,
+    HHID_PN %in% id14 ~ hbp14,
+    TRUE ~ NA_real_
+  ),
+  his_dm = case_when(
+    HHID_PN %in% id98 ~ dm98,
+    HHID_PN %in% id00 ~ dm00,
+    HHID_PN %in% id02 ~ dm02,
+    HHID_PN %in% id04 ~ dm04,
+    HHID_PN %in% id06 ~ dm06,
+    HHID_PN %in% id08 ~ dm08,
+    HHID_PN %in% id10 ~ dm10,
+    HHID_PN %in% id12 ~ dm12,
+    HHID_PN %in% id14 ~ dm14,
+    TRUE ~ NA_real_
+  ),
+  his_ca = case_when(
+    HHID_PN %in% id98 ~ ca98,
+    HHID_PN %in% id00 ~ ca00,
+    HHID_PN %in% id02 ~ ca02,
+    HHID_PN %in% id04 ~ ca04,
+    HHID_PN %in% id06 ~ ca06,
+    HHID_PN %in% id08 ~ ca08,
+    HHID_PN %in% id10 ~ ca10,
+    HHID_PN %in% id12 ~ ca12,
+    HHID_PN %in% id14 ~ ca14,
+    TRUE ~ NA_real_
+  ),
+  his_lung = case_when(
+    HHID_PN %in% id98 ~ lung98,
+    HHID_PN %in% id00 ~ lung00,
+    HHID_PN %in% id02 ~ lung02,
+    HHID_PN %in% id04 ~ lung04,
+    HHID_PN %in% id06 ~ lung06,
+    HHID_PN %in% id08 ~ lung08,
+    HHID_PN %in% id10 ~ lung10,
+    HHID_PN %in% id12 ~ lung12,
+    HHID_PN %in% id14 ~ lung14,
+    TRUE ~ NA_real_
+  ),
+  his_heart = case_when(
+    HHID_PN %in% id98 ~ heart98,
+    HHID_PN %in% id00 ~ heart00,
+    HHID_PN %in% id02 ~ heart02,
+    HHID_PN %in% id04 ~ heart04,
+    HHID_PN %in% id06 ~ heart06,
+    HHID_PN %in% id08 ~ heart08,
+    HHID_PN %in% id10 ~ heart10,
+    HHID_PN %in% id12 ~ heart12,
+    HHID_PN %in% id14 ~ heart14,
+    TRUE ~ NA_real_
+  ),
+  his_stroke = case_when(
+    HHID_PN %in% id98 ~ stroke98,
+    HHID_PN %in% id00 ~ stroke00,
+    HHID_PN %in% id02 ~ stroke02,
+    HHID_PN %in% id04 ~ stroke04,
+    HHID_PN %in% id06 ~ stroke06,
+    HHID_PN %in% id08 ~ stroke08,
+    HHID_PN %in% id10 ~ stroke10,
+    HHID_PN %in% id12 ~ stroke12,
+    HHID_PN %in% id14 ~ stroke14,
+    TRUE ~ NA_real_
+  ),
+  his_psychiatric = case_when(
+    HHID_PN %in% id98 ~ psychiatric98,
+    HHID_PN %in% id00 ~ psychiatric00,
+    HHID_PN %in% id02 ~ psychiatric02,
+    HHID_PN %in% id04 ~ psychiatric04,
+    HHID_PN %in% id06 ~ psychiatric06,
+    HHID_PN %in% id08 ~ psychiatric08,
+    HHID_PN %in% id10 ~ psychiatric10,
+    HHID_PN %in% id12 ~ psychiatric12,
+    HHID_PN %in% id14 ~ psychiatric14,
+    TRUE ~ NA_real_
+  ),
+  his_arthritis = case_when(
+    HHID_PN %in% id98 ~ arthritis98,
+    HHID_PN %in% id00 ~ arthritis00,
+    HHID_PN %in% id02 ~ arthritis02,
+    HHID_PN %in% id04 ~ arthritis04,
+    HHID_PN %in% id06 ~ arthritis06,
+    HHID_PN %in% id08 ~ arthritis08,
+    HHID_PN %in% id10 ~ arthritis10,
+    HHID_PN %in% id12 ~ arthritis12,
+    HHID_PN %in% id14 ~ arthritis14,
+    TRUE ~ NA_real_
+  ),
+  his_cataract = case_when(
+    HHID_PN %in% id98 ~ cataract98,
+    HHID_PN %in% id00 ~ cataract00,
+    HHID_PN %in% id02 ~ cataract02,
+    HHID_PN %in% id04 ~ cataract04,
+    HHID_PN %in% id06 ~ cataract06,
+    HHID_PN %in% id08 ~ cataract08,
+    HHID_PN %in% id10 ~ cataract10,
+    HHID_PN %in% id12 ~ cataract12,
+    HHID_PN %in% id14 ~ cataract14,
+    TRUE ~ NA_real_
+  ),
+  his_glaucoma = case_when(
+    HHID_PN %in% id98 ~ glaucoma98,
+    HHID_PN %in% id00 ~ glaucoma00,
+    HHID_PN %in% id02 ~ glaucoma02,
+    HHID_PN %in% id04 ~ glaucoma04,
+    HHID_PN %in% id06 ~ glaucoma06,
+    HHID_PN %in% id08 ~ glaucoma08,
+    HHID_PN %in% id10 ~ glaucoma10,
+    HHID_PN %in% id12 ~ glaucoma12,
+    HHID_PN %in% id14 ~ glaucoma14,
+    TRUE ~ NA_real_
+  )
+)
+
+# heart
+df_ration_heart <- df_ration1.1.1 %>% filter(bornUS==1)#2679
+df_ration2 <- df_ration_heart %>% mutate(
+  out_heart = ifelse(heart98==1|heart00==1|heart02==1|heart04==1|heart06==1|heart08==1|heart10==1|heart12==1|heart14==1,1,0),
+  followup_heart = case_when(
+    heart98==1 & HHID_PN %in% id98 ~ syr98 - byr,
+    heart00==1 & HHID_PN %in% id00 ~ syr00 - byr,
+    heart02==1 & HHID_PN %in% id02 ~ syr02 - byr,
+    heart04==1 & HHID_PN %in% id04 ~ syr04 - byr,
+    heart06==1 & HHID_PN %in% id06 ~ syr06 - byr,
+    heart08==1 & HHID_PN %in% id08 ~ syr08 - byr,
+    heart10==1 & HHID_PN %in% id10 ~ syr10 - byr,
+    heart12==1 & HHID_PN %in% id12 ~ syr12 - byr,
+    heart14==1 & HHID_PN %in% id14 ~ syr14 - byr,
+    TRUE ~ last_syr - byr
+  )
+  
+)
+
+class(df_ration2$sex)
+class(df_ration2$ethnic)
+summary(df_ration2$sex)
+summary(df_ration2$ethnic)
+table(df_ration2$byr)
+table(df_ration2$bmo)
+table(df_ration2$syr)
+df_ration2$syr <- scale(df_ration2$syr,center = TRUE,scale = FALSE)
+df_ration2$byr <- scale(df_ration2$byr,center = TRUE,scale = FALSE)
+
+m2 <- c("sex","ethnic","bmo","syr","byr","state")
+summary(as.factor(df_ration2$stage))
+df_ration2$stage <- as.factor(recodeVar(df_ration2$stage,c(0,1),c(1,0)))
+#person-year
+py_F <- sum(df_ration2$followup_heart[df_ration2$stage == 0])
+py_T <- sum(df_ration2$followup_heart[df_ration2$stage == 1])
+
+events_F <- sum(df_ration2$out_heart[df_ration2$stage == 0]==1)
+events_T <- sum(df_ration2$out_heart[df_ration2$stage == 1]==1)
+
+fit <- cox.analysis.f(X1=c("stage"),
+                      Y = "out_heart",time = "followup_heart",
+                      adj =m2,Data = df_ration2,N = 2)
+view(fit)
+
+dists <- list("exp", "weibull", "llogis", "lnorm", "gompertz")
+results_summary$AIC_formatted <- sprintf("%.2f", results_summary$AIC)
+results_summary$BIC_formatted <- sprintf("%.2f", results_summary$BIC)
+results_summary_heart <- results_summary
+
+fit_heart_full <- flexsurvreg(
+  Surv(followup_heart, out_heart) ~ stage + sex + 
+    syr + ethnic + state + 
+    bmo + byr,
+  data = df_ration2,
+  dist = "lnorm"
+)
+print(fit_heart_full)
+summary(fit_heart_full)
+hr_heart <- extract_hazard_ratios(fit_heart_full)
+
+## ca
+df_ration_ca <- df_ration1.1.1 %>% filter(bornUS==1)#2679
+df_ration2 <- df_ration_ca %>% mutate(
+  out_ca = ifelse(ca98==1|ca00==1|ca02==1|ca04==1|ca06==1|ca08==1|ca10==1|ca12==1|ca14==1,1,0),
+  followup_ca = case_when(
+    ca98==1 & HHID_PN %in% id98 ~ syr98 - byr,
+    ca00==1 & HHID_PN %in% id00 ~ syr00 - byr,
+    ca02==1 & HHID_PN %in% id02 ~ syr02 - byr,
+    ca04==1 & HHID_PN %in% id04 ~ syr04 - byr,
+    ca06==1 & HHID_PN %in% id06 ~ syr06 - byr,
+    ca08==1 & HHID_PN %in% id08 ~ syr08 - byr,
+    ca10==1 & HHID_PN %in% id10 ~ syr10 - byr,
+    ca12==1 & HHID_PN %in% id12 ~ syr12 - byr,
+    ca14==1 & HHID_PN %in% id14 ~ syr14 - byr,
+    TRUE ~ last_syr - byr
+  )
+  
+)
+class(df_ration2$sex)
+class(df_ration2$ethnic)
+#df_ration2$sex <- as.numeric(df_ration2$sex)
+#df_ration2$ethnic <- as.numeric(df_ration2$ethnic)
+summary(df_ration2$sex)
+summary(df_ration2$ethnic)
+table(df_ration2$byr)
+table(df_ration2$bmo)
+table(df_ration2$syr)
+df_ration2$syr <- scale(df_ration2$syr,center = TRUE,scale = FALSE)
+df_ration2$byr <- scale(df_ration2$byr,center = TRUE,scale = FALSE)
+
+m2 <- c("sex","ethnic","bmo","syr","byr","state")
+summary(as.factor(df_ration2$stage))
+df_ration2$stage <- as.factor(recodeVar(df_ration2$stage,c(0,1),c(1,0)))
+#person-year
+py_F <- sum(df_ration2$followup_ca[df_ration2$stage == 0])
+py_T <- sum(df_ration2$followup_ca[df_ration2$stage == 1])
+
+events_F <- sum(df_ration2$out_ca[df_ration2$stage == 0]==1)
+events_T <- sum(df_ration2$out_ca[df_ration2$stage == 1]==1)
+
+fit <- cox.analysis.f(X1=c("stage"),
+                      Y = "out_ca",time = "followup_ca",
+                      adj =m2,Data = df_ration2,N = 2)
+view(fit)
+
+surv_formula <- Surv(followup_ca, out_ca) ~ 
+  stage + sex +ethnic + bmo + state + byr + syr
+
+models <- lapply(dists, function(dist) {
+  get_model(formula = surv_formula, dist = dist, data = df_ration2)
+})
+
+names(models) <- dists
+
+results_summary <- data.frame(
+  Distribution = character(),
+  AIC = numeric(),
+  BIC = numeric(),
+  LogLik = numeric(),
+  Events = numeric(),
+  N = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in seq_along(models)) {
+  if (!is.na(models[[i]][1])) { 
+    results_summary <- rbind(results_summary, data.frame(
+      Distribution = names(models)[i],
+      AIC = models[[i]]["AIC"],
+      BIC = models[[i]]["BIC"],
+      LogLik = models[[i]]["LogLik"],
+      Events = models[[i]]["Events"],
+      N = models[[i]]["N"],
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+
+results_summary$AIC_formatted <- sprintf("%.2f", results_summary$AIC)
+results_summary$BIC_formatted <- sprintf("%.2f", results_summary$BIC)
+results_summary_ca <- results_summary
+
+fit_ca_full <- flexsurvreg(
+  Surv(followup_ca, out_ca) ~ stage + sex + 
+    state + ethnic + 
+    byr + bmo + syr,
+  data = df_ration2,
+  dist = "lnorm"
+)
+print(fit_ca_full)
+
+hr_ca <- extract_hazard_ratios(fit_ca_full)
+
+## psychiatric
+df_ration_psychiatric <- df_ration1.1.1 %>% filter(bornUS==1)#2679
+df_ration2 <- df_ration_psychiatric %>% mutate(
+  out_psychiatric = ifelse(psychiatric98==1|psychiatric00==1|psychiatric02==1|psychiatric04==1|psychiatric06==1|psychiatric08==1|psychiatric10==1|psychiatric12==1|psychiatric14==1,1,0),
+  followup_psychiatric = case_when(
+    psychiatric98==1 & HHID_PN %in% id98 ~ syr98 - byr,
+    psychiatric00==1 & HHID_PN %in% id00 ~ syr00 - byr,
+    psychiatric02==1 & HHID_PN %in% id02 ~ syr02 - byr,
+    psychiatric04==1 & HHID_PN %in% id04 ~ syr04 - byr,
+    psychiatric06==1 & HHID_PN %in% id06 ~ syr06 - byr,
+    psychiatric08==1 & HHID_PN %in% id08 ~ syr08 - byr,
+    psychiatric10==1 & HHID_PN %in% id10 ~ syr10 - byr,
+    psychiatric12==1 & HHID_PN %in% id12 ~ syr12 - byr,
+    psychiatric14==1 & HHID_PN %in% id14 ~ syr14 - byr,
+    TRUE ~ last_syr - byr
+  )
+  
+)
+class(df_ration2$sex)
+class(df_ration2$ethnic)
+#df_ration2$sex <- as.numeric(df_ration2$sex)
+#df_ration2$ethnic <- as.numeric(df_ration2$ethnic)
+summary(df_ration2$sex)
+summary(df_ration2$ethnic)
+table(df_ration2$byr)
+table(df_ration2$bmo)
+table(df_ration2$syr)
+df_ration2$syr <- scale(df_ration2$syr,center = TRUE,scale = FALSE)
+df_ration2$byr <- scale(df_ration2$byr,center = TRUE,scale = FALSE)
+
+m2 <- c("sex","ethnic","bmo","syr","byr","state")
+summary(as.factor(df_ration2$stage))
+df_ration2$stage <- as.factor(recodeVar(df_ration2$stage,c(0,1),c(1,0)))
+#person-year
+py_F <- sum(df_ration2$followup_psychiatric[df_ration2$stage == 0])
+py_T <- sum(df_ration2$followup_psychiatric[df_ration2$stage == 1])
+
+events_F <- sum(df_ration2$out_psychiatric[df_ration2$stage == 0]==1)
+events_T <- sum(df_ration2$out_psychiatric[df_ration2$stage == 1]==1)
+
+surv_formula <- Surv(followup_psychiatric, out_psychiatric) ~ 
+  stage + sex +ethnic + bmo + state + byr + syr
+
+models <- lapply(dists, function(dist) {
+  get_model(formula = surv_formula, dist = dist, data = df_ration2)
+})
+
+names(models) <- dists
+
+results_summary <- data.frame(
+  Distribution = character(),
+  AIC = numeric(),
+  BIC = numeric(),
+  LogLik = numeric(),
+  Events = numeric(),
+  N = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in seq_along(models)) {
+  if (!is.na(models[[i]][1])) {  
+    results_summary <- rbind(results_summary, data.frame(
+      Distribution = names(models)[i],
+      AIC = models[[i]]["AIC"],
+      BIC = models[[i]]["BIC"],
+      LogLik = models[[i]]["LogLik"],
+      Events = models[[i]]["Events"],
+      N = models[[i]]["N"],
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+
+results_summary$AIC_formatted <- sprintf("%.2f", results_summary$AIC)
+results_summary$BIC_formatted <- sprintf("%.2f", results_summary$BIC)
+results_summary_psychiatric <- results_summary
+
+fit_psychiatric_full <- flexsurvreg(
+  Surv(followup_psychiatric, out_psychiatric) ~ stage + sex + 
+    state + ethnic + 
+    byr + bmo + syr,
+  data = df_ration2,
+  dist = "lnorm"
+)
+print(fit_psychiatric_full)
+
+hr_psychiatric <- extract_hazard_ratios(fit_psychiatric_full)
+
+## arthritis
+df_ration_arthritis <- df_ration1.1.1 %>% filter(bornUS==1)#2679
+df_ration2 <- df_ration_arthritis %>% mutate(
+  out_arthritis = ifelse(arthritis98==1|arthritis00==1|arthritis02==1|arthritis04==1|arthritis06==1|arthritis08==1|arthritis10==1|arthritis12==1|arthritis14==1,1,0),
+  followup_arthritis = case_when(
+    arthritis98==1 & HHID_PN %in% id98 ~ syr98 - byr,
+    arthritis00==1 & HHID_PN %in% id00 ~ syr00 - byr,
+    arthritis02==1 & HHID_PN %in% id02 ~ syr02 - byr,
+    arthritis04==1 & HHID_PN %in% id04 ~ syr04 - byr,
+    arthritis06==1 & HHID_PN %in% id06 ~ syr06 - byr,
+    arthritis08==1 & HHID_PN %in% id08 ~ syr08 - byr,
+    arthritis10==1 & HHID_PN %in% id10 ~ syr10 - byr,
+    arthritis12==1 & HHID_PN %in% id12 ~ syr12 - byr,
+    arthritis14==1 & HHID_PN %in% id14 ~ syr14 - byr,
+    TRUE ~ last_syr - byr
+  )
+  
+)
+class(df_ration2$sex)
+class(df_ration2$ethnic)
+
+df_ration2$syr <- scale(df_ration2$syr,center = TRUE,scale = FALSE)
+df_ration2$byr <- scale(df_ration2$byr,center = TRUE,scale = FALSE)
+
+summary(df_ration2$followup_arthritis)
+summary(df_ration2$out_arthritis)
+
+m2 <- c("sex","ethnic","bmo","syr","byr","state")
+summary(as.factor(df_ration2$stage))
+df_ration2$stage <- as.factor(recodeVar(df_ration2$stage,c(0,1),c(1,0)))
+#person-year
+py_F <- sum(df_ration2$followup_arthritis[df_ration2$stage == 0])
+py_T <- sum(df_ration2$followup_arthritis[df_ration2$stage == 1])
+
+events_F <- sum(df_ration2$out_arthritis[df_ration2$stage == 0]==1)
+events_T <- sum(df_ration2$out_arthritis[df_ration2$stage == 1]==1)
+
+surv_formula <- Surv(followup_arthritis, out_arthritis) ~ 
+  stage + sex +ethnic + bmo + state + byr + syr
+models <- lapply(dists, function(dist) {
+  get_model(formula = surv_formula, dist = dist, data = df_ration2)
+})
+
+names(models) <- dists
+
+results_summary <- data.frame(
+  Distribution = character(),
+  AIC = numeric(),
+  BIC = numeric(),
+  LogLik = numeric(),
+  Events = numeric(),
+  N = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in seq_along(models)) {
+  if (!is.na(models[[i]][1])) {  
+    results_summary <- rbind(results_summary, data.frame(
+      Distribution = names(models)[i],
+      AIC = models[[i]]["AIC"],
+      BIC = models[[i]]["BIC"],
+      LogLik = models[[i]]["LogLik"],
+      Events = models[[i]]["Events"],
+      N = models[[i]]["N"],
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+
+results_summary$AIC_formatted <- sprintf("%.2f", results_summary$AIC)
+results_summary$BIC_formatted <- sprintf("%.2f", results_summary$BIC)
+results_summary_arthritis <- results_summary
+
+fit_arthritis_full <- flexsurvreg(
+  Surv(followup_arthritis, out_arthritis) ~ stage + sex + 
+    state + ethnic + 
+    byr + bmo + syr,
+  data = df_ration2,
+  dist = "lnorm"
+)
+print(fit_arthritis_full)
+
+hr_arthritis <- extract_hazard_ratios(fit_arthritis_full)
+
+## glaucoma
+df_ration_glaucoma <- df_ration1.1.1 %>% filter(bornUS==1)#2679
+df_ration2 <- df_ration_glaucoma %>% mutate(
+  out_glaucoma = ifelse(glaucoma98==1|glaucoma00==1|glaucoma02==1|glaucoma04==1|glaucoma06==1|glaucoma08==1|glaucoma10==1|glaucoma12==1|glaucoma14==1,1,0),
+  followup_glaucoma = case_when(
+    glaucoma98==1 & HHID_PN %in% id98 ~ syr98 - byr,
+    glaucoma00==1 & HHID_PN %in% id00 ~ syr00 - byr,
+    glaucoma02==1 & HHID_PN %in% id02 ~ syr02 - byr,
+    glaucoma04==1 & HHID_PN %in% id04 ~ syr04 - byr,
+    glaucoma06==1 & HHID_PN %in% id06 ~ syr06 - byr,
+    glaucoma08==1 & HHID_PN %in% id08 ~ syr08 - byr,
+    glaucoma10==1 & HHID_PN %in% id10 ~ syr10 - byr,
+    glaucoma12==1 & HHID_PN %in% id12 ~ syr12 - byr,
+    glaucoma14==1 & HHID_PN %in% id14 ~ syr14 - byr,
+    TRUE ~ last_syr - byr
+  )
+  
+)
+class(df_ration2$sex)
+class(df_ration2$ethnic)
+#df_ration2$sex <- as.numeric(df_ration2$sex)
+#df_ration2$ethnic <- as.numeric(df_ration2$ethnic)
+summary(df_ration2$sex)
+summary(df_ration2$ethnic)
+table(df_ration2$byr)
+table(df_ration2$bmo)
+table(df_ration2$syr)
+df_ration2$syr <- scale(df_ration2$syr,center = TRUE,scale = FALSE)
+df_ration2$byr <- scale(df_ration2$byr,center = TRUE,scale = FALSE)
+
+
+#person-year
+py_F <- sum(df_ration2$followup_glaucoma[df_ration2$stage == 0])
+py_T <- sum(df_ration2$followup_glaucoma[df_ration2$stage == 1])
+
+events_F <- sum(df_ration2$out_glaucoma[df_ration2$stage == 0]==1)
+events_T <- sum(df_ration2$out_glaucoma[df_ration2$stage == 1]==1)
+
+m2 <- c("sex","ethnic","bmo","syr","byr","state")
+summary(as.factor(df_ration2$stage))
+df_ration2$stage <- as.factor(recodeVar(df_ration2$stage,c(0,1),c(1,0)))
+
+surv_formula <- Surv(followup_glaucoma, out_glaucoma) ~ 
+  stage + sex +ethnic + bmo + state + byr + syr
+
+models <- lapply(dists, function(dist) {
+  get_model(formula = surv_formula, dist = dist, data = df_ration2)
+})
+
+names(models) <- dists
+
+hr_glaucoma <- extract_hazard_ratios(fit_glaucoma_full)
+
+## mental
+df_ration_mental <- df_ration1.1.1 %>% filter(bornUS==1)#2679
+df_ration2 <- df_ration_mental %>% mutate(
+  out_mental = ifelse(mental98==1|mental00==1|mental02==1|mental04==1|mental06==1|mental08==1|mental10==1|mental12==1|mental14==1,1,0),
+  followup_mental = case_when(
+    mental98==1 & HHID_PN %in% id98 ~ syr98 - byr,
+    mental00==1 & HHID_PN %in% id00 ~ syr00 - byr,
+    mental02==1 & HHID_PN %in% id02 ~ syr02 - byr,
+    mental04==1 & HHID_PN %in% id04 ~ syr04 - byr,
+    mental06==1 & HHID_PN %in% id06 ~ syr06 - byr,
+    mental08==1 & HHID_PN %in% id08 ~ syr08 - byr,
+    mental10==1 & HHID_PN %in% id10 ~ syr10 - byr,
+    mental12==1 & HHID_PN %in% id12 ~ syr12 - byr,
+    mental14==1 & HHID_PN %in% id14 ~ syr14 - byr,
+    TRUE ~ last_syr - byr
+  )
+  
+)
+class(df_ration2$sex)
+class(df_ration2$ethnic)
+df_ration2$syr <- scale(df_ration2$syr,center = TRUE,scale = FALSE)
+df_ration2$byr <- scale(df_ration2$byr,center = TRUE,scale = FALSE)
+
+summary(df_ration2$followup_mental)
+summary(df_ration2$out_mental)
+m2 <- c("sex","ethnic","bmo","syr","byr","state")
+summary(as.factor(df_ration2$stage))
+df_ration2$stage <- as.factor(recodeVar(df_ration2$stage,c(0,1),c(1,0)))
+#person-year
+py_F <- sum(df_ration2$followup_mental[df_ration2$stage == 0])
+py_T <- sum(df_ration2$followup_mental[df_ration2$stage == 1])
+
+events_F <- sum(df_ration2$out_mental[df_ration2$stage == 0]==1)
+events_T <- sum(df_ration2$out_mental[df_ration2$stage == 1]==1)
+fit <- cox.analysis.f(X1=c("stage"),
+                      Y = "out_mental",time = "followup_mental",
+                      adj =m2,Data = df_ration2,N = 2)
+view(fit)
+
+surv_formula <- Surv(followup_mental, out_mental) ~ 
+  stage + sex +ethnic + bmo + state + byr + syr
+models <- lapply(dists, function(dist) {
+  get_model(formula = surv_formula, dist = dist, data = df_ration2)
+})
+
+names(models) <- dists
+
+results_summary$AIC_formatted <- sprintf("%.2f", results_summary$AIC)
+results_summary$BIC_formatted <- sprintf("%.2f", results_summary$BIC)
+results_summary_mental <- results_summary
+
+fit_mental_full <- flexsurvreg(
+  Surv(followup_mental, out_mental) ~ stage + sex + 
+    state + ethnic + 
+    byr + bmo + syr,
+  data = df_ration2,
+  dist = "lnorm"
+)
+print(fit_mental_full)
+
+hr_mental <- extract_hazard_ratios(fit_mental_full)
 
