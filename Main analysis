@@ -1,1 +1,875 @@
+# Main analysis ----------------------
+# Baseline --------------------------
+dat6$pa_g <- as.factor(dat6$pa_g)
+library(kableExtra)
+tab1_vars <- c('age_assess','sex', 'ethnic', 
+               "education", "household", "tdi_v0",
+               'survey_yr',
+               'birth_place', 'birth_season',  
+               "birth_weight", "breastfed_v0", "maternal_smoking_v0",
+               "MET_week", "pa_g", "smk", "alh", "bmi_v0", "waist_v0",
+               "diet_scoreSES_v0","sleep_score_v0","mental_score_v0",
+               "blood_hba1c_v0", "sbp_v0", "dbp_v0", 
+               "blood_tg_v0", "blood_tc_v0", "blood_hdl_v0", "blood_ldl_v0", 
+               "blood_crp_v0", "only_fm_cvd_v0", "only_fm_diabetes_v0"
+               )
+
+tab1 <- t1.f(tab1_vars, 'sugar_ex_gro', dat6,.format = T)
+tab1g <- t1.f(tab1_vars, 'sugar.g2', dat6,.format = T)
+tab1_tot<-CreateTableOne(tab1_vars,dat= dat6,includeNA = F,addOverall = TRUE)
+N <- print(tab1_tot,showAllLevels = TRUE)
+
+# Compare ---------------------------------
+# Assessing the best fitted distribution using the Akaike and Bayesian Information Criterion.
+library(dplyr)
+library(survival)
+library(survminer)
+dat6$survey_yr_centered <- scale(dat6$survey_yr, center = TRUE, scale = FALSE)
+
+dat6$Infections_yr <- dat6$followup_fo_birth_Diseases_of_Infections/365.25
+dists <- list("exp", "weibull", "llogis", "lnorm", "gompertz")
+get_model <- function(formula, dist, data) {
+  tryCatch({
+    model <- flexsurvreg(
+      formula = formula,
+      dist = dist,
+      data = data
+    )
+    
+    result <- c(
+      model$res[, 1], 
+      AIC = AIC(model),
+      BIC = BIC(model),
+      LogLik = model$loglik,
+      Events = sum(model$data$Y[, 2]),  
+      N = nrow(model$data$Y)  
+    )
+    return(result)
+  }, error = function(e) {
+    warning(paste("Failed to fit", dist, "distribution:", e$message))
+    return(NA)
+  })
+}
+
+surv_formula <- Surv(Infections_yr, outcome_fo_birth_Diseases_of_Infections) ~ 
+  sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+  north_decile + east_decile + birth_month + survey_yr_centered
+
+models <- lapply(dists, function(dist) {
+  get_model(formula = surv_formula, dist = dist, data = dat6)
+})
+names(models) <- dists
+results_summary <- data.frame(
+  Distribution = character(),
+  AIC = numeric(),
+  BIC = numeric(),
+  LogLik = numeric(),
+  Events = numeric(),
+  N = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in seq_along(models)) {
+  if (!is.na(models[[i]][1])) { 
+    results_summary <- rbind(results_summary, data.frame(
+      Distribution = names(models)[i],
+      AIC = models[[i]]["AIC"],
+      BIC = models[[i]]["BIC"],
+      LogLik = models[[i]]["LogLik"],
+      Events = models[[i]]["Events"],
+      N = models[[i]]["N"],
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+
+results_summary$AIC_formatted <- sprintf("%.2f", results_summary$AIC)
+results_summary$BIC_formatted <- sprintf("%.2f", results_summary$BIC)
+
+
+# Infection --------------------------------------------
+fit_Infections1 <- flexsurvreg(
+  Surv(Infections_yr, outcome_fo_birth_Diseases_of_Infections) ~ sugar_ex_gro + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Infections2 <- flexsurvreg(
+  Surv(Infections_yr, outcome_fo_birth_Diseases_of_Infections) ~ 
+    sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Infections3 <- flexsurvreg(
+  Surv(Infections_yr, outcome_fo_birth_Diseases_of_Infections) ~ sugar.g2 + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Infections4 <- flexsurvreg(
+  Surv(Infections_yr, outcome_fo_birth_Diseases_of_Infections) ~ 
+    sugar.g2 + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Infections5 <- flexsurvreg(
+  Surv(Infections_yr, outcome_fo_birth_Diseases_of_Infections) ~ sugar_ex_ordered + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Infections6 <- flexsurvreg(
+  Surv(Infections_yr, outcome_fo_birth_Diseases_of_Infections) ~ 
+    sugar_ex_ordered + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered,
+  data = dat6,
+  dist = "gompertz"
+)
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+# Cancer -------------------------------------------------
+# gompertz
+fit_cancer1 <- flexsurvreg(
+  Surv(cancer_yr, outcome_fo_birth_cancer) ~ sugar_ex_gro + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_cancer2 <- flexsurvreg(
+  Surv(cancer_yr, outcome_fo_birth_cancer) ~ 
+    sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    only_fm_prostate_ca_v0 + only_fm_breast_ca_v0 + only_fm_bowel_ca_v0 + only_fm_lung_ca_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_cancer_BC + prs_cancer_CRC + prs_cancer_PC + prs_cancer_EOC,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_cancer3 <- flexsurvreg(
+  Surv(cancer_yr, outcome_fo_birth_cancer) ~ sugar.g2 + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_cancer4 <- flexsurvreg(
+  Surv(cancer_yr, outcome_fo_birth_cancer) ~ 
+    sugar.g2 + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    only_fm_prostate_ca_v0 + only_fm_breast_ca_v0 + only_fm_bowel_ca_v0 + only_fm_lung_ca_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_cancer_BC + prs_cancer_CRC + prs_cancer_PC + prs_cancer_EOC,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_cancer5 <- flexsurvreg(
+  Surv(cancer_yr, outcome_fo_birth_cancer) ~ sugar_ex_ordered + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_cancer6 <- flexsurvreg(
+  Surv(cancer_yr, outcome_fo_birth_cancer) ~ 
+    sugar_ex_ordered + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    only_fm_prostate_ca_v0 + only_fm_breast_ca_v0 + only_fm_bowel_ca_v0 + only_fm_lung_ca_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_cancer_BC + prs_cancer_CRC + prs_cancer_PC + prs_cancer_EOC,
+  data = dat6,
+  dist = "gompertz"
+)
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+# Blood and immune disorders --------------------------------------
+# gompertz
+fit_Blood1 <- flexsurvreg(
+  Surv(Blood_yr, outcome_fo_birth_Blood_and_immune_disorders) ~ sugar_ex_gro + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Blood2 <- flexsurvreg(
+  Surv(Blood_yr, outcome_fo_birth_Blood_and_immune_disorders) ~ 
+    sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + prs_blood_immune_SLE,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Blood3 <- flexsurvreg(
+  Surv(Blood_yr, outcome_fo_birth_Blood_and_immune_disorders) ~ sugar.g2 + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Blood4 <- flexsurvreg(
+  Surv(Blood_yr, outcome_fo_birth_Blood_and_immune_disorders) ~ 
+    sugar.g2 + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + prs_blood_immune_SLE,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Blood5 <- flexsurvreg(
+  Surv(Blood_yr, outcome_fo_birth_Blood_and_immune_disorders) ~ sugar_ex_ordered + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Blood6 <- flexsurvreg(
+  Surv(Blood_yr, outcome_fo_birth_Blood_and_immune_disorders) ~ 
+    sugar_ex_ordered + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + prs_blood_immune_SLE,
+  data = dat6,
+  dist = "gompertz"
+)
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+# Endocrine disorders --------------------------------
+# gompertz
+dat6$Endocrine_yr <- dat6$followup_fo_birth_Endocrine_disorders/365.25
+fit_Endocrine1 <- flexsurvreg(
+  Surv(Endocrine_yr, outcome_fo_birth_Endocrine_disorders) ~ sugar_ex_gro + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Endocrine2 <- flexsurvreg(
+  Surv(Endocrine_yr, outcome_fo_birth_Endocrine_disorders) ~ 
+    sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_endocrine_BMI + prs_endocrine_T1D + prs_endocrine_T2D,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Endocrine3 <- flexsurvreg(
+  Surv(Endocrine_yr, outcome_fo_birth_Endocrine_disorders) ~ sugar.g2 + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Endocrine4 <- flexsurvreg(
+  Surv(Endocrine_yr, outcome_fo_birth_Endocrine_disorders) ~ 
+    sugar.g2 + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_endocrine_BMI + prs_endocrine_T1D + prs_endocrine_T2D,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Endocrine5 <- flexsurvreg(
+  Surv(Endocrine_yr, outcome_fo_birth_Endocrine_disorders) ~ sugar_ex_ordered + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Endocrine6 <- flexsurvreg(
+  Surv(Endocrine_yr, outcome_fo_birth_Endocrine_disorders) ~ 
+    sugar_ex_ordered + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_endocrine_BMI + prs_endocrine_T1D + prs_endocrine_T2D,
+  data = dat6,
+  dist = "gompertz"
+)
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+
+# Mental and behavioural disorders ---------------------------------
+# gompertz
+fit_Mental1 <- flexsurvreg(
+  Surv(Mental_yr, outcome_fo_birth_Mental_and_behavioural_disorders) ~ sugar_ex_gro + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Mental2 <- flexsurvreg(
+  Surv(Mental_yr, outcome_fo_birth_Mental_and_behavioural_disorders) ~ 
+    sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    only_fm_dementia_v0 + only_fm_depression_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_mental_behavioural_AD + prs_mental_behavioural_BD + prs_mental_behavioural_SCZ,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Mental3 <- flexsurvreg(
+  Surv(Mental_yr, outcome_fo_birth_Mental_and_behavioural_disorders) ~ sugar.g2 + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Mental4 <- flexsurvreg(
+  Surv(Mental_yr, outcome_fo_birth_Mental_and_behavioural_disorders) ~ 
+    sugar.g2 + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    only_fm_dementia_v0 + only_fm_depression_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_mental_behavioural_AD + prs_mental_behavioural_BD + prs_mental_behavioural_SCZ,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Mental5 <- flexsurvreg(
+  Surv(Mental_yr, outcome_fo_birth_Mental_and_behavioural_disorders) ~ sugar_ex_ordered + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Mental6 <- flexsurvreg(
+  Surv(Mental_yr, outcome_fo_birth_Mental_and_behavioural_disorders) ~ 
+    sugar_ex_ordered + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    only_fm_dementia_v0 + only_fm_depression_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_mental_behavioural_AD + prs_mental_behavioural_BD + prs_mental_behavioural_SCZ,
+  data = dat6,
+  dist = "gompertz"
+)
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+
+# Nervous system disorders ----------------------------------------
+# gompertz
+fit_Nervous1 <- flexsurvreg(
+  Surv(Nervous_yr, outcome_fo_birth_Nervous_system_disorders) ~ sugar_ex_gro + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Nervous2 <- flexsurvreg(
+  Surv(Nervous_yr, outcome_fo_birth_Nervous_system_disorders) ~ 
+    sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    only_fm_pd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_nervous_MS + prs_nervous_PD,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Nervous3 <- flexsurvreg(
+  Surv(Nervous_yr, outcome_fo_birth_Nervous_system_disorders) ~ sugar.g2 + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Nervous4 <- flexsurvreg(
+  Surv(Nervous_yr, outcome_fo_birth_Nervous_system_disorders) ~ 
+    sugar.g2 + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    only_fm_pd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_nervous_MS + prs_nervous_PD,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Nervous5 <- flexsurvreg(
+  Surv(Nervous_yr, outcome_fo_birth_Nervous_system_disorders) ~ sugar_ex_ordered + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Nervous6 <- flexsurvreg(
+  Surv(Nervous_yr, outcome_fo_birth_Nervous_system_disorders) ~ 
+    sugar_ex_ordered + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    only_fm_pd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_nervous_MS + prs_nervous_PD,
+  data = dat6,
+  dist = "gompertz"
+)
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+
+# Eye disorders ----------------------------------
+# gompertz
+dat6$eye_yr <- dat6$followup_fo_birth_Eye_disorders/365.25
+fit_Eye1 <- flexsurvreg(
+  Surv(eye_yr, outcome_fo_birth_Eye_disorders) ~ sugar_ex_gro + sex + ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Eye2 <- flexsurvreg(
+  Surv(eye_yr, outcome_fo_birth_Eye_disorders) ~ 
+    sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_eye_AMD + prs_eye_IOP + prs_eye_POAG,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Eye3 <- flexsurvreg(
+  Surv(eye_yr, outcome_fo_birth_Eye_disorders) ~ sugar.g2 + sex + ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Eye4 <- flexsurvreg(
+  Surv(eye_yr, outcome_fo_birth_Eye_disorders) ~ 
+    sugar.g2 + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_eye_AMD + prs_eye_IOP + prs_eye_POAG,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Eye5 <- flexsurvreg(
+  Surv(eye_yr, outcome_fo_birth_Eye_disorders) ~ sugar_ex_ordered + sex + ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Eye6 <- flexsurvreg(
+  Surv(eye_yr, outcome_fo_birth_Eye_disorders) ~ 
+    sugar_ex_ordered + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_eye_AMD + prs_eye_IOP + prs_eye_POAG,
+  data = dat6,
+  dist = "gompertz"
+)
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+
+# Ear disorders ----------------------------------
+# gompertz
+dat6$Ear_yr <- dat6$followup_fo_birth_Ear_disorders/365.25
+fit_Ear1 <- flexsurvreg(
+  Surv(Ear_yr, outcome_fo_birth_Ear_disorders) ~ sugar_ex_gro + 
+    sex + ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Ear2 <- flexsurvreg(
+  Surv(Ear_yr, outcome_fo_birth_Ear_disorders) ~ 
+    sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Ear3 <- flexsurvreg(
+  Surv(Ear_yr, outcome_fo_birth_Ear_disorders) ~ sugar.g2 + 
+    sex + ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Ear4 <- flexsurvreg(
+  Surv(Ear_yr, outcome_fo_birth_Ear_disorders) ~ 
+    sugar.g2 + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Ear5 <- flexsurvreg(
+  Surv(Ear_yr, outcome_fo_birth_Ear_disorders) ~ sugar_ex_ordered + 
+    sex + ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Ear6 <- flexsurvreg(
+  Surv(Ear_yr, outcome_fo_birth_Ear_disorders) ~ 
+    sugar_ex_ordered + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered,
+  data = dat6,
+  dist = "gompertz"
+)
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+# Digestive system disorders --------------------
+# gompertz
+fit_Digestive1 <- flexsurvreg(
+  Surv(Digestive_yr, outcome_fo_birth_Digestive_system_disorders) ~ sugar_ex_gro + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Digestive2 <- flexsurvreg(
+  Surv(Digestive_yr, outcome_fo_birth_Digestive_system_disorders) ~ 
+    sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_digestive_CD + prs_digestive_CED + prs_digestive_UC,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Digestive3 <- flexsurvreg(
+  Surv(Digestive_yr, outcome_fo_birth_Digestive_system_disorders) ~ sugar.g2 + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Digestive4 <- flexsurvreg(
+  Surv(Digestive_yr, outcome_fo_birth_Digestive_system_disorders) ~ 
+    sugar.g2 + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_digestive_CD + prs_digestive_CED + prs_digestive_UC,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Digestive5 <- flexsurvreg(
+  Surv(Digestive_yr, outcome_fo_birth_Digestive_system_disorders) ~ sugar_ex_ordered + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Digestive6 <- flexsurvreg(
+  Surv(Digestive_yr, outcome_fo_birth_Digestive_system_disorders) ~ 
+    sugar_ex_ordered + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_digestive_CD + prs_digestive_CED + prs_digestive_UC,
+  data = dat6,
+  dist = "gompertz"
+)
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+# Skin disorders -------------------
+fit_Skin1 <- flexsurvreg(
+  Surv(Skin_yr, outcome_fo_birth_Skin_disorders) ~ sugar_ex_gro + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Skin2 <- flexsurvreg(
+  Surv(Skin_yr, outcome_fo_birth_Skin_disorders) ~ 
+    sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_skin_PSO,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Skin3 <- flexsurvreg(
+  Surv(Skin_yr, outcome_fo_birth_Skin_disorders) ~ sugar.g2 + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Skin4 <- flexsurvreg(
+  Surv(Skin_yr, outcome_fo_birth_Skin_disorders) ~ 
+    sugar.g2 + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_skin_PSO,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Skin5 <- flexsurvreg(
+  Surv(Skin_yr, outcome_fo_birth_Skin_disorders) ~ sugar_ex_ordered + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Skin6 <- flexsurvreg(
+  Surv(Skin_yr, outcome_fo_birth_Skin_disorders) ~ 
+    sugar_ex_ordered + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_skin_PSO,
+  data = dat6,
+  dist = "gompertz"
+)
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+
+# Musculoskeletal system disorders ------------------------
+fit_Musculoskeletal1 <- flexsurvreg(
+  Surv(Musculoskeletal_yr, outcome_fo_birth_Musculoskeletal_system_disorders) ~ sugar_ex_gro + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Musculoskeletal2 <- flexsurvreg(
+  Surv(Musculoskeletal_yr, outcome_fo_birth_Musculoskeletal_system_disorders) ~ 
+    sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_bone_EBMDT + prs_bone_gout + prs_bone_OP + prs_bone_RA,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Musculoskeletal3 <- flexsurvreg(
+  Surv(Musculoskeletal_yr, outcome_fo_birth_Musculoskeletal_system_disorders) ~ sugar.g2 + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Musculoskeletal4 <- flexsurvreg(
+  Surv(Musculoskeletal_yr, outcome_fo_birth_Musculoskeletal_system_disorders) ~ 
+    sugar.g2 + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_bone_EBMDT + prs_bone_gout + prs_bone_OP + prs_bone_RA,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Musculoskeletal5 <- flexsurvreg(
+  Surv(Musculoskeletal_yr, outcome_fo_birth_Musculoskeletal_system_disorders) ~ sugar_ex_ordered + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Musculoskeletal6 <- flexsurvreg(
+  Surv(Musculoskeletal_yr, outcome_fo_birth_Musculoskeletal_system_disorders) ~ 
+    sugar_ex_ordered + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_bone_EBMDT + prs_bone_gout + prs_bone_OP + prs_bone_RA,
+  data = dat6,
+  dist = "gompertz"
+)
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+
+# Genitourinary system disorders ----------------------------------
+fit_Genitourinary1 <- flexsurvreg(
+  Surv(Genitourinary_yr, outcome_fo_birth_Genitourinary_system_disorders) ~ sugar_ex_gro + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Genitourinary2 <- flexsurvreg(
+  Surv(Genitourinary_yr, outcome_fo_birth_Genitourinary_system_disorders) ~ 
+    sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_genitourinary_ckd,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Genitourinary3 <- flexsurvreg(
+  Surv(Genitourinary_yr, outcome_fo_birth_Genitourinary_system_disorders) ~ sugar.g2 + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Genitourinary4 <- flexsurvreg(
+  Surv(Genitourinary_yr, outcome_fo_birth_Genitourinary_system_disorders) ~ 
+    sugar.g2 + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_genitourinary_ckd,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Genitourinary5 <- flexsurvreg(
+  Surv(Genitourinary_yr, outcome_fo_birth_Genitourinary_system_disorders) ~ sugar_ex_ordered + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_Genitourinary6 <- flexsurvreg(
+  Surv(Genitourinary_yr, outcome_fo_birth_Genitourinary_system_disorders) ~ 
+    sugar_ex_ordered + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_genitourinary_ckd,
+  data = dat6,
+  dist = "gompertz"
+)
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+
+# Mortality ----------------------------------
+# All-cause 
+fit_death1 <- flexsurvreg(
+  Surv(death_yr, outcome_death_birth_all) ~ sugar_ex_gro + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_death2 <- flexsurvreg(
+  Surv(death_yr, outcome_death_birth_all) ~ 
+    sugar_ex_gro + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_death3 <- flexsurvreg(
+  Surv(death_yr, outcome_death_birth_all) ~ sugar.g2 + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_death4 <- flexsurvreg(
+  Surv(death_yr, outcome_death_birth_all) ~ 
+    sugar.g2 + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_death5 <- flexsurvreg(
+  Surv(death_yr, outcome_death_birth_all) ~ sugar_ex_ordered + sex + 
+    ethnic,
+  data = dat6,
+  dist = "gompertz"
+)
+fit_death6 <- flexsurvreg(
+  Surv(death_yr, outcome_death_birth_all) ~ 
+    sugar_ex_ordered + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered,
+  data = dat6,
+  dist = "gompertz"
+)
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+tab2_names <- ls(pattern = "^tab2_")
+
+combined_data <- bind_rows(
+  lapply(tab2_names, function(name) {
+    obj <- get(name)
+    if (is.data.frame(obj)) {
+      obj %>% mutate(source_dataset = name)
+    } 
+  }),
+  .id = "dataset_id"
+)
+write.csv(combined_data, 'table2.csv')
+
+
+# Figure 2 ---------------------------------------------------
+library(ggplot2)
+library(dplyr)
+library(flexsurv)
+library(splines)
+dat9 <- dat6
+dat9$sugar_event_k <- as.factor(dat9$event_study_k)
+dat9$sugar_event_k <- relevel(dat9$sugar_event_k,ref = "0")
+
+fit_Infections <- flexsurvreg(
+  Surv(Infections_yr, outcome_fo_birth_Diseases_of_Infections) ~ 
+    sugar_event_k + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered,
+  data = dat9,
+  dist = "gompertz"
+)
+fit_cancer <- flexsurvreg(
+  Surv(cancer_yr, outcome_fo_birth_cancer) ~ 
+    sugar_event_k + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    only_fm_prostate_ca_v0 + only_fm_breast_ca_v0 + only_fm_bowel_ca_v0 + only_fm_lung_ca_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_cancer_BC + prs_cancer_CRC + prs_cancer_PC + prs_cancer_EOC,
+  data = dat9,
+  dist = "gompertz"
+)
+fit_Blood <- flexsurvreg(
+  Surv(Blood_yr, outcome_fo_birth_Blood_and_immune_disorders) ~ 
+    sugar_event_k + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + prs_blood_immune_SLE,
+  data = dat9,
+  dist = "gompertz"
+)
+fit_Mental <- flexsurvreg(
+  Surv(Mental_yr, outcome_fo_birth_Mental_and_behavioural_disorders) ~ 
+    sugar_event_k + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    only_fm_dementia_v0 + only_fm_depression_v0 +
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_mental_behavioural_AD + prs_mental_behavioural_BD + prs_mental_behavioural_SCZ,
+  data = dat9,
+  dist = "gompertz"
+)
+fit_Nervous <- flexsurvreg(
+  Surv(Nervous_yr, outcome_fo_birth_Nervous_system_disorders) ~ 
+    sugar_event_k + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    only_fm_pd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_nervous_MS + prs_nervous_PD,
+  data = dat9,
+  dist = "gompertz"
+)
+fit_Eye <- flexsurvreg(
+  Surv(eye_yr, outcome_fo_birth_Eye_disorders) ~ 
+    sugar_event_k + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_eye_AMD + prs_eye_IOP + prs_eye_POAG,
+  data = dat9,
+  dist = "gompertz"
+)
+fit_Ear <- flexsurvreg(
+  Surv(Ear_yr, outcome_fo_birth_Ear_disorders) ~ 
+    sugar_event_k + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered,
+  data = dat9,
+  dist = "gompertz"
+)
+fit_Digestive <- flexsurvreg(
+  Surv(Digestive_yr, outcome_fo_birth_Digestive_system_disorders) ~ 
+    sugar_event_k + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_digestive_CD + prs_digestive_CED + prs_digestive_UC,
+  data = dat9,
+  dist = "gompertz"
+)
+fit_Skin <- flexsurvreg(
+  Surv(Skin_yr, outcome_fo_birth_Skin_disorders) ~ 
+    sugar_event_k + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_skin_PSO,
+  data = dat9,
+  dist = "gompertz"
+)
+fit_Musculoskeletal <- flexsurvreg(
+  Surv(Musculoskeletal_yr, outcome_fo_birth_Musculoskeletal_system_disorders) ~ 
+    sugar_event_k + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_bone_EBMDT + prs_bone_gout + prs_bone_OP + prs_bone_RA,
+  data = dat9,
+  dist = "gompertz"
+)
+fit_Genitourinary <- flexsurvreg(
+  Surv(Genitourinary_yr, outcome_fo_birth_Genitourinary_system_disorders) ~ 
+    sugar_event_k + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered + 
+    prs_genitourinary_ckd,
+  data = dat9,
+  dist = "gompertz"
+)
+fit_death <- flexsurvreg(
+  Surv(death_yr, outcome_fo_birth_Renal_failure) ~ 
+    sugar_event_k + sex + ethnic + birth_place + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    north_decile + east_decile + birth_month + survey_yr_centered,
+  data = dat9,
+  dist = "gompertz"
+)
+
+results_models <- list()
+results_models[[1]] <- calculate_results(fit_Infections, "Infections")
+results_models[[2]] <- calculate_results(fit_cancer, "Cancer")
+results_models[[3]] <- calculate_results(fit_Blood, "Blood")
+results_models[[4]] <- calculate_results(fit_Mental, "Mental")
+results_models[[5]] <- calculate_results(fit_Nervous, "Nervous")
+results_models[[6]] <- calculate_results(fit_Eye, "Eye")
+results_models[[7]] <- calculate_results(fit_Ear, "Ear")
+results_models[[8]] <- calculate_results(fit_Skin, "Skin")
+results_models[[9]] <- calculate_results(fit_Musculoskeletal, "Musculoskeletal")
+results_models[[10]] <- calculate_results(fit_Digestive, "Digestive")
+results_models[[11]] <- calculate_results(fit_Genitourinary, "Genitourinary")
+results_models[[12]] <- calculate_results(fit_death, "Death")
+
+all_results <- do.call(rbind, results_models)
+
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+
+figure2_data <- read.csv("figure2_data.csv")
+
+prepare_plot_data <- function(data) {
+  data$k <- as.numeric(gsub("sugar_event_k", "", data$Variable))
+  
+  plot_data <- data[order(data$k), ]
+  
+  plot_data$signif <- ifelse(
+    plot_data$P_Value < 0.001, "***",
+    ifelse(
+      plot_data$P_Value < 0.01, "**",
+      ifelse(
+        plot_data$P_Value < 0.05, "*",
+        ifelse(
+          plot_data$P_Value < 0.1, "+", ""
+        )
+      )
+    )
+  )
+  
+  return(plot_data)
+}
 
