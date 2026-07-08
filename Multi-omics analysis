@@ -1,0 +1,499 @@
+# Multi-omics analysis ------------------------------------
+dat6$sex_nu <- ifelse(dat6$sex == 'Female', 0, 1)
+dat6$ethnic_nu <- ifelse(dat6$ethnic == "White", 0, 1)
+dat6$birth_place_nu <- ifelse(dat6$birth_place == 'England', 1, ifelse(dat6$birth_place == 'Scotland', 2, 3))
+dat6$only_fm_diabetes_v0_nu <- ifelse(dat6$only_fm_diabetes_v0 == 'TRUE', 1, 0)
+dat6$only_fm_cvd_v0_nu <- ifelse(dat6$only_fm_cvd_v0 == 'TRUE', 1, 0)
+dat6$north_decile_nu <- as.numeric(dat6$north_decile)
+dat6$east_decile_nu <- as.numeric(dat6$east_decile)
+dat6$birth_month_nu <- as.numeric(dat6$birth_month)
+dat6$survey_yr_nu <- as.numeric(dat6$survey_yr)
+base_var <- paste0(adj_vars_infect2, "_nu")
+str(dat6[base_var])
+summary(dat6$sugar_ex_gro)
+
+# Proteomics ---------------------------------------------------------
+library(tidyverse)
+source("load_ukb_fields.R")
+protein_v0 <- as.data.frame(olink_data) %>% 
+  filter(ins_index == 0)
+summary(protein_v0$protein_id)
+protein_freq=protein_v0 %>% group_by(protein_id)%>% summarise(count=n())
+summary(protein_freq$count)
+table(protein_freq$count>53029*0.8)#12
+protein_less20=subset(protein_freq,count>53029*0.8)#2911
+dim(protein_less20)
+protein_more20=subset(protein_v0,protein_id %in% protein_less20$protein_id)
+dim(protein_more20)
+
+protein_wider <- protein_more20 %>% 
+  pivot_wider(names_from = protein_id,
+              names_prefix = 'protein_',
+              values_from = result,
+              values_fill = NA
+  )
+dim(protein_wider)
+sum(is.na(protein_wider))
+names(protein_wider)[1]='f.eid'
+
+name_protein <- str_subset(names(protein_wider), '^protein_')
+length(name_protein)
+new_name_protein=paste('new',name_protein,sep = '_')
+protein_wider[new_name_protein]=lapply(protein_wider[name_protein], function(x) ifelse(is.na(x),mean(x,na.rm=T),x))
+protein_new<-protein_wider[,c('f.eid',new_name_protein)]
+sum(is.na(protein_new))
+protein_cols <- setdiff(names(protein_new), "f.eid")
+
+sugar_pro<- dat6 %>% 
+  filter(f.eid %in% protein_new$f.eid) %>%
+  left_join(., protein_new, by = c('f.eid' = 'f.eid')) # 6227
+
+for (feature in protein_cols) {
+  sugar_pro[[feature]] <- scale(sugar_pro[[feature]])
+}
+sum(is.na(sugar_pro[protein_cols]))
+
+# baseline
+sugar_pro$pa_g <- as.factor(sugar_pro$pa_g)
+tab1_pro<-CreateTableOne(tab1_vars,dat= sugar_pro,includeNA = F,addOverall = TRUE)
+N <- print(tab1_pro,showAllLevels = TRUE)
+tab1g_pro <- t1.f(tab1_vars, 'sugar.g2', sugar_pro,.format = T)
+
+# LASSO
+library(glmnet)
+model2_x <- sugar_pro[c(base_var, protein_cols)]
+dim(model2_x)
+model2_x_matrix <- makeX(model2_x)
+
+model2_y <- as.matrix(sugar_pro[,c("sugar.g2")])
+
+penalty.factor <- rep(1, ncol(model2_x_matrix)) 
+names(penalty.factor) <- colnames(model2_x_matrix)
+penalty.factor[base_var] <- 0
+
+set.seed(123)
+model2_cvfit <- cv.glmnet(model2_x_matrix, 
+                          model2_y, 
+                          family="binomial", 
+                          nfolds = 10,
+                          alpha = 1,
+                          penalty.factor = penalty.factor,
+                          tethnic.it = 1)
+coef_model2 <- coef(model2_cvfit, s = 'lambda.1se')
+
+lasso_protein <- coef_model2@Dimnames[[1]][coef_model2@i + 1]
+lasso_protein_only <- stringr::str_subset(lasso_protein, 'protein')
+length(lasso_protein_only)
+# 104
+coef_model2@x
+
+# Mediation analysis
+sugar_pro$outcome_Infection <- as.numeric(sugar_pro$outcome_fo_birth_Diseases_of_Infections)
+cox.analysis.f(X1= 'sugar.g2',
+               Y ="outcome_fo_birth_Diseases_of_Infections",
+               time = "followup_fo_birth_Diseases_of_Infections",
+               adj = adj_vars_infect2,
+               Data = sugar_pro,N = 2)
+
+set.seed(123) 
+for (protein in lasso_protein_only) {
+  protein_model_name <- paste0("p", gsub("new_protein_", "", protein))
+  mediator_var <- protein
+  
+  mediator_model <- lm(as.formula(paste0(mediator_var, "~ sugar.g2 + sex + ethnic + birth_place + north_decile + east_decile +
+                                         birth_month + only_fm_diabetes_v0 + only_fm_cvd_v0 + survey_yr")),
+                       data = sugar_pro)
+  
+  outcome_model <- survreg(as.formula(paste0("Surv(followup_fo_birth_Diseases_of_Infections, outcome_Infection) ~ sugar.g2 + ", 
+                                             mediator_var, " + sex + ethnic + birth_place + north_decile + east_decile +
+                                             birth_month + only_fm_diabetes_v0 + only_fm_cvd_v0 + survey_yr")),
+                           dist = "weibull", data = sugar_pro)
+  
+  med_result <- mediate(mediator_model, outcome_model, treat = "sugar.g2", mediator = mediator_var, sims = 1000)
+  
+  results_list[[protein_model_name]] <- med_result
+  
+  cat("\nCompleted mediation analysis for:", protein_model_name, "\n")
+}
+
+mediation_full_info$p_fdr <- p.adjust(mediation_full_info$P_Value, method = "fdr")
+
+# Metabolomics -------------------------------------------------------------
+metabolite <- read.table("ukb677282.tab", header=TRUE, sep="\t")
+head(metabolite,1)
+
+library(dplyr)
+fields <- as.character(c(23400:23434, 23436:23440, 23442:23450, 23460:23578)) # 168
+pattern <- paste(fields, collapse = "|")
+
+sugar_metabolite_id <- metabolite %>%
+  dplyr::select(c(1, which(grepl(pattern, names(metabolite)))))
+
+sugar_metabolite_id <- sugar_metabolite_id %>%
+  dplyr::select(c(1, which(grepl("\\.0\\.0$", names(sugar_metabolite_id)))))
+
+sugar_metabolite_all <- na.omit(sugar_metabolite_id) # 260972
+
+sum(is.na(sugar_metabolite_all))
+
+sugar_metabolite_cols <- setdiff(names(sugar_metabolite_all), "f.eid")
+
+sugar_met<- dat6 %>% 
+  filter(f.eid %in% sugar_metabolite_all$f.eid) %>%
+  left_join(., sugar_metabolite_all, by = c('f.eid' = 'f.eid')) 
+dim(sugar_met) # 32382
+sum(is.na(sugar_met[sugar_metabolite_cols])) # 0
+
+for (feature in sugar_metabolite_cols) {
+  min_positive_value <- min(sugar_met[[feature]][sugar_met[[feature]] > 0], na.rm = TRUE)
+  sugar_met[[feature]][sugar_met[[feature]] <= 0] <- min_positive_value / 2
+  
+  sugar_met[[feature]] <- log1p(sugar_met[[feature]]) 
+  
+  sugar_met[[feature]] <- scale(sugar_met[[feature]])
+}
+
+# baseline
+sugar_met$pa_g <- as.factor(sugar_met$pa_g)
+tab1_met<-CreateTableOne(tab1_vars,dat= sugar_met,includeNA = F,addOverall = TRUE)
+N <- print(tab1_met,showAllLevels = TRUE)
+
+tab1g_met <- t1.f(tab1_vars, 'sugar.g2', sugar_met,.format = T)
+
+# LASSO
+library(glmnet)
+model2_x <- sugar_met[c(base_var, sugar_metabolite_cols)]
+dim(model2_x)
+model2_x_matrix <- makeX(model2_x)
+
+model2_y <- as.matrix(sugar_met[,c("sugar.g2")])
+
+penalty.factor <- rep(1, ncol(model2_x_matrix))
+names(penalty.factor) <- colnames(model2_x_matrix)
+penalty.factor[base_var] <- 0
+
+set.seed(123)
+model2_cvfit <- cv.glmnet(model2_x_matrix, 
+                          model2_y, 
+                          family="binomial", 
+                          nfolds = 10,
+                          alpha = 1,
+                          penalty.factor = penalty.factor,
+                          tethnic.it = 1)
+
+coef_model2 <- coef(model2_cvfit, s = 'lambda.min')
+
+lasso_metab <- coef_model2@Dimnames[[1]][coef_model2@i + 1]
+lasso_metab_only <- stringr::str_subset(lasso_metab, '^f.')
+length(lasso_metab_only)
+# 31
+coef_model2@x
+
+# Mediation analysis
+sugar_met$outcome_Cancer <- as.numeric(sugar_met$outcome_fo_birth_cancer)
+cox.analysis.f(X1= 'sugar.g2',
+               Y ="outcome_fo_birth_cancer",
+               time = "followup_fo_birth_cancer",
+               adj = adj_vars_ca2,
+               Data = sugar_met,N = 2)
+results_ca_cox <- data.frame(variable = character(),
+                             hr = numeric(),
+                             ci_low = numeric(),
+                             ci_high = numeric(),
+                             p_val = numeric(),
+                             stringsAsFactors = FALSE)
+
+for (variable in lasso_metab_only) {
+  formula_str <- as.formula(paste("Surv(followup_fo_birth_cancer, outcome_Cancer) ~", variable, "+", paste(c(adj_vars_ca2), collapse = " + ")))
+  
+  model <- coxph(formula_str, data = sugar_met)
+  
+  hr <- exp(coef(model)[1])
+  ci <- exp(confint(model)[1, ])
+  p_val <- summary(model)$coefficients[1, "Pr(>|z|)"]
+  
+  results_ca_cox <- results_ca_cox %>%
+    add_row(variable = variable, hr = hr, ci_low = ci[1], ci_high = ci[2], p_val = p_val)
+}
+
+results_ca_cox$p_fdr <- p.adjust(results_ca_cox$p_val, method = "BH")
+summary(results_ca_cox$p_val<0.05) # 11
+ca_cox_met <- filter(results_ca_cox, results_ca_cox$p_val<0.05)
+ca_cox <- ca_cox_met$variable
+
+results_list <- list()
+set.seed(123)  
+for (metabolite in ca_cox) {
+  metabolite_model_name <- paste0("m", gsub("f.", "", metabolite))
+  mediator_var <- metabolite
+  
+  mediator_model <- lm(as.formula(paste0(mediator_var, "~ sugar.g2 + sex + ethnic + birth_place + north_decile + east_decile +
+                                         birth_month + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+                                         only_fm_prostate_ca_v0 + only_fm_breast_ca_v0 + only_fm_bowel_ca_v0 + 
+                                         only_fm_lung_ca_v0 + survey_yr + prs_cancer_BC + 
+                                         prs_cancer_CRC + prs_cancer_PC + prs_cancer_EOC")),
+                       data = sugar_met)
+  
+  outcome_model <- survreg(as.formula(paste0("Surv(followup_fo_birth_cancer, outcome_Cancer) ~ sugar.g2 + ", 
+                                             mediator_var, " + sex + ethnic + birth_place + north_decile + east_decile +
+                                         birth_month + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+                                         only_fm_prostate_ca_v0 + only_fm_breast_ca_v0 + only_fm_bowel_ca_v0 + 
+                                         only_fm_lung_ca_v0 + survey_yr + prs_cancer_BC + 
+                                         prs_cancer_CRC + prs_cancer_PC + prs_cancer_EOC")),
+                           dist = "weibull", data = sugar_met)
+  
+  med_result <- mediate(mediator_model, outcome_model, treat = "sugar.g2", mediator = mediator_var, sims = 1000)
+  
+  results_list[[metabolite_model_name]] <- med_result
+  
+  cat("\nCompleted mediation analysis for:", metabolite_model_name, "\n")
+}
+
+# Phenomics --------------------------------------------------
+dat_pheno <- left_join(x=dat6, y=dat_blood_biochemistry)
+
+dat_blood_count <- readRDS('blood_count.RDS')
+names(dat_blood_count)
+dat_pheno <- left_join(x=dat_pheno, y=dat_blood_count)
+
+obesity <- readRDS("obesity.RDS")
+names(obesity)
+names(obesity)
+fat_vars <- c('WHR', 'WHtR', 'CI', 'ABSI', 'BRI', 
+              'RFM', 'VAI', 'LAP', 
+              'Leg_fat_mass_avg', 'Trunk_leg_fat_ratio', 
+              'Fat_muscle_ratio', 'FFMI', 'FMI')
+summary(obesity[fat_vars])
+dat_pheno <- left_join(x=dat_pheno, y=obesity)
+
+final_hoso<-readRDS("hoso_df_c.rds")
+dat_pheno <- left_join(x=dat_pheno, y=final_hoso)
+
+dat_pheno <- left_join(x=dat_pheno, y=dat_biological_age)
+
+rspiro_dat <- get_fields(c(20151, 20150))
+rspiro_dat <- rspiro_dat %>% 
+  transmute(f.eid,
+            FVC_v0 = f.20151.0.0,
+            FEV1_v0 = f.20150.0.0)
+summary(rspiro_dat)
+dat_pheno <- left_join(x=dat_pheno, y=rspiro_dat)
+
+library(tidyverse)
+library(broom)
+library(qvalue)
+library(tableone)
+library(corrplot)
+library(parallel)
+library(foreach)
+library(doParallel)
+
+set.seed(123)
+exposure_var_name <- "sugar_ex_ordered"
+adj_vars <- adj_vars_infect2
+
+obesity_vars <- c(
+  "BMI", "weight", "height", 
+  "Body_fat_percentage", "Whole_body_fat_mass", "Whole_body_fat_free_mass",
+  "waist", "hip", "WHR", "WHtR",
+  "Trunk_fat_percentage", "Trunk_fat_mass",
+  "Leg_fat_percentage_avg", "Leg_fat_mass_avg",
+  "Arm_fat_percentage_avg", "Arm_fat_mass_avg",
+  "FFMI", "FMI", "Fat_muscle_ratio", "Trunk_leg_fat_ratio",
+  "ABSI", "BRI", "VAI", "LAP", "RFM", "CI"
+)
+
+metabolic_vars <- c(
+  "blood_Glucose", "blood_Glycated_haemoglobin_HbA1c",
+  "blood_Triglycerides", "blood_Cholesterol", 
+  "blood_HDL_cholesterol", "blood_LDL_direct",
+  "blood_Apolipoprotein_A", "blood_Apolipoprotein_B",
+  "blood_Lipoprotein_A", "TyG", "eGDR"
+)
+
+liver_vars <- c(
+  "blood_Alanine_aminotransferase", 
+  "blood_Aspartate_aminotransferase",
+  "blood_Gamma_glutamyltransferase",
+  "blood_Alkaline_phosphatase",
+  "blood_Total_bilirubin", "blood_Direct_bilirubin",
+  "blood_Albumin", "blood_Total_protein"
+)
+
+kidney_vars <- c(
+  "blood_Urea", "blood_Creatinine", "blood_Cystatin_C",
+  "blood_Urate", "blood_Phosphate", "blood_Calcium"
+)
+
+inflammatory_vars <- c(
+  "blood_C_reactive_protein", "blood_Rheumatoid_factor",
+  "nlr", "plr", "sll", "lmr", "INFLA",
+  "blood_Leukocyte_count", "blood_Lymphocyte_count",
+  "blood_Neutrophill_count", "blood_Monocyte_count"
+)
+
+hormone_vars <- c(
+  "blood_IGF_1", "blood_Oestradiol", 
+  "blood_Testosterone", "blood_SHBG",
+  "blood_Vitamin_D"
+)
+
+blood_count_vars <- c(
+  "blood_Haemoglobin_concentration", "blood_Haematocrit_percentage",
+  "blood_Platelet_count", "blood_Mean_platelet_volume",
+  "blood_RBC_count", "blood_Mean_corpuscular_volume"
+)
+
+cardio_vars <- c("sbp_v0", "dbp_v0", "Basal_metabolic_rate")
+
+lung_vars <- c("FVC_v0", "FEV1_v0")
+
+aging_vars <- c("kdm_sd", "phenoage_sd", "tl_sd")
+
+all_pheno_vars <- c(
+  obesity_vars, metabolic_vars, liver_vars, kidney_vars,
+  inflammatory_vars, hormone_vars, blood_count_vars,
+  cardio_vars, lung_vars, aging_vars
+)
+
+missing_threshold <- 0.35
+missing_rates <- sapply(all_pheno_vars, function(var) {
+  sum(is.na(dat_pheno[[var]])) / nrow(dat_pheno)
+})
+
+filtered_vars <- missing_df %>%
+  filter(missing_rate < missing_threshold) %>%
+  pull(variable)
+
+missing_df %>%
+  arrange(desc(missing_rate)) %>%
+  head(10) %>%
+  print()
+
+all_pheno_vars <- filtered_vars
+
+variable_category <- bind_rows(
+  data.frame(variable = obesity_vars, category = "Adiposity") %>% filter(variable %in% all_pheno_vars),
+  data.frame(variable = metabolic_vars, category = "Metabolic") %>% filter(variable %in% all_pheno_vars),
+  data.frame(variable = liver_vars, category = "Liver") %>% filter(variable %in% all_pheno_vars),
+  data.frame(variable = kidney_vars, category = "Kidney") %>% filter(variable %in% all_pheno_vars),
+  data.frame(variable = inflammatory_vars, category = "Inflammatory") %>% filter(variable %in% all_pheno_vars),
+  data.frame(variable = hormone_vars, category = "Hormone") %>% filter(variable %in% all_pheno_vars),
+  data.frame(variable = blood_count_vars, category = "Blood") %>% filter(variable %in% all_pheno_vars),
+  data.frame(variable = cardio_vars, category = "Cardio") %>% filter(variable %in% all_pheno_vars),
+  data.frame(variable = lung_vars, category = "Lung") %>% filter(variable %in% all_pheno_vars),
+  data.frame(variable = aging_vars, category = "Aging") %>% filter(variable %in% all_pheno_vars)
+)
+
+if (nrow(results_all) > 0) {
+    results_all <- results_all %>%
+    left_join(variable_category, by = "variable")
+  
+  results_all <- results_all %>%
+    dplyr::group_by(category) %>%
+    dplyr::mutate(
+      fdr = p.adjust(p_value, method = "fdr"),
+      fdr_category = ifelse(fdr < 0.05, "Significant", "Non-significant")
+    ) %>%
+    dplyr::ungroup()
+  
+  results_all$fdr_global <- p.adjust(results_all$p_value, method = "fdr")
+  results_all$fdr_global_sig <- ifelse(results_all$fdr_global < 0.05, 
+                                       "Significant", "Non-significant")
+  
+  significant_vars_category <- results_all %>%
+    dplyr::filter(fdr < 0.05) %>%
+    dplyr::arrange(category, fdr)
+    sig_summary <- significant_vars_category %>%
+    dplyr::group_by(category) %>%
+    dplyr::summarise(
+      n_significant = n(),
+      min_fdr = min(fdr),
+      max_beta = max(abs(beta_std))
+    ) %>%
+    dplyr::arrange(desc(n_significant))
+  
+  print(sig_summary)
+  
+  selected_phenos <- significant_vars_category$variable
+  
+}
+results_all$Variable_formal <- var_label_mapping[as.character(results_all$variable)]
+
+pheno_sig <- filter(results_all, results_all$fdr_category == "Significant") # 50
+pheno_sig <- pheno_sig$variable
+
+# Mediation analysis
+vars_to_transform <- pheno_sig[pheno_sig != "tl_sd"]
+dat_pheno <- dat_pheno %>%
+  mutate(across(
+    .cols = all_of(vars_to_transform),
+    .fns = ~ . / sd(., na.rm = TRUE),
+    .names = "{.col}_sd"
+  ))
+
+pheno_sig_sd <- grep("_sd$", names(dat_pheno), value = TRUE)
+pheno_sig_sd <- pheno_sig_sd[-c(1:2)]
+results_all1 <- filter(results_all, results_all$fdr_category == "Significant") # 50
+results_all1$variable <- ifelse(
+  grepl("_sd$", results_all1$variable),  
+  results_all1$variable,                 
+  paste0(results_all1$variable, "_sd")  
+)
+variable_category$variable <- ifelse(
+  grepl("_sd$", variable_category$variable), 
+  variable_category$variable,                 
+  paste0(variable_category$variable, "_sd")   
+)
+
+results_all1$Variable_formal <- var_label_mapping[as.character(results_all1$variable)]
+
+results_infect_cox <- data.frame(variable = character(),
+                                 hr = numeric(),
+                                 ci_low = numeric(),
+                                 ci_high = numeric(),
+                                 p_val = numeric(),
+                                 stringsAsFactors = FALSE)
+
+for (variable in pheno_sig_sd) {
+  formula_str <- as.formula(paste("Surv(followup_fo_birth_Diseases_of_Infections, outcome_fo_birth_Diseases_of_Infections) ~", variable, "+", paste(c(adj_vars_infect2), collapse = " + ")))
+  
+  model <- coxph(formula_str, data = dat_pheno)
+  
+  hr <- exp(coef(model)[1])
+  ci <- exp(confint(model)[1, ])
+  p_val <- summary(model)$coefficients[1, "Pr(>|z|)"]
+  
+  results_infect_cox <- results_infect_cox %>%
+    add_row(variable = variable, hr = hr, ci_low = ci[1], ci_high = ci[2], p_val = p_val)
+}
+
+results_infect_cox$p_fdr <- p.adjust(results_infect_cox$p_val, method = "BH")
+summary(results_infect_cox$p_val<0.05) # 18
+infect_cox_sig <- filter(results_infect_cox, results_infect_cox$p_val<0.05)
+infect_cox_sig$disease <- "Infections"
+infect_cox_sig <- left_join(x=infect_cox_sig, y=results_all1)
+
+results_list <- list()
+set.seed(123) 
+for (phenotype in pheno_sig_sd) {
+  phenotype_model_name <- phenotype
+  mediator_var <- phenotype
+  
+  mediator_model <- lm(as.formula(paste0(mediator_var, "~ sugar.g2 + sex + ethnic + birth_place + north_decile + east_decile +
+                                         birth_month + only_fm_diabetes_v0 + only_fm_cvd_v0 + survey_yr")),
+                       data = dat_pheno)
+  
+  outcome_model <- survreg(as.formula(paste0("Surv(followup_fo_birth_Diseases_of_Infections, outcome_fo_birth_Diseases_of_Infections) ~ sugar.g2 + ", 
+                                             mediator_var, " + sex + ethnic + birth_place + north_decile + east_decile +
+                                             birth_month + only_fm_diabetes_v0 + only_fm_cvd_v0 + survey_yr")),
+                           dist = "weibull", data = dat_pheno)
+  
+  med_result <- mediate(mediator_model, outcome_model, treat = "sugar.g2", mediator = mediator_var, sims = 1000)
+  
+  results_list[[phenotype_model_name]] <- med_result
+    cat("\nCompleted mediation analysis for:", phenotype_model_name, "\n")
+}
+
+write.csv(mediation_results_df, "mediation_phenotypes/infection.csv", row.names = FALSE)
+summary(mediation_results_df$P_Value < 0.05 & mediation_results_df$Mediation_Proportion > 0) # 9
