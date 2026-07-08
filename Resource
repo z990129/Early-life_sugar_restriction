@@ -1,1 +1,217 @@
+# Resource and Data --------------------------------------------------------
+setwd('home/sugar_rationing')
 
+# Flow ------------------------------------------------------------
+withdrawn_id <- readRDS('withdraw.RDS')
+dat_recode <- readRDS('recode.RDS')
+
+summary(birth_year$birth_year)
+summary(birth_month$birth_month)
+dat_recode <- dat_recode %>% left_join(birth_year) %>% left_join(birth_month)
+dat <- dat_recode %>% filter(!f.eid %in% withdrawn_id$V1) # 502242
+summary(dat$birth_year)
+summary(dat$birth_month)
+
+dat1 <- dat %>%
+  filter(
+    (birth_year * 100 + as.numeric(birth_month)) >= 195110 &  
+      (birth_year * 100 + as.numeric(birth_month)) <= 195603
+  )
+dim(dat1)
+# 74214
+summary(dat1$birth_year) 
+summary(dat1$birth_month)
+
+early_dat$birth_place <- as.factor(ifelse(early_dat$f.1647.0.0 %in% c("England", "Northern Ireland", "Republic of Ireland"), "England", 
+                                          ifelse(early_dat$f.1647.0.0 == "Scotland", "Scotland", 
+                                                 ifelse(early_dat$f.1647.0.0 == "Wales", "Wales", NA))))
+
+early_dat <- early_dat %>%
+  mutate(
+    adopted_v0 = recode_unknow(f.1767.0.0),
+    born_multiple = recode_unknow(f.1777.0.0),
+    pregnant_v0 = f.3140.0.0
+  )
+dat1 <- dat1 %>% left_join(early_dat)
+
+dat2 <- subset(dat1, !is.na(dat1$birth_place))
+dim(dat2) # 67472
+dat2 <- subset(dat2, dat2$adopted_v0 == "No")
+dim(dat2) # 66576
+dat2 <- subset(dat2, dat2$born_multiple == "No")
+dim(dat2) # 64947
+
+outcome_all <- readRDS('outcome/all_birth_outcome_definition_v1.rds')
+names(outcome_all)
+dat2 <- dat2 %>% left_join(outcome_all)
+
+summary(dat2$birth_year) 
+summary(dat2$birth_month)
+dat3 <- subset(dat1, is.na(dat1$birth_place)) # 6742
+
+# Exposure --------------------------------------------
+exposure_key <- readRDS('supporting/exposure_group_lookup.rds')  # 内含 birth_year, birth_month, birth_group_fine, sugar_ex_gro
+dat2 <- dat2 %>% left_join(exposure_key, by = c("birth_year", "birth_month"))
+
+# Covariate ------------------------
+ukb_pa <-readRDS('PA.RDS')
+dat2 <- left_join(x=dat2, y=ukb_pa)
+dat2$birth_month <- factor(dat2$birth_month, 
+                           levels = month.name, 
+                           ordered = TRUE)
+
+summary(dat2$birth_month)
+str(dat2$birth_month)
+dat2$birth_month_num <- as.numeric(dat2$birth_month)
+dat2 <- dat2 %>% 
+  mutate(
+    ethnic = recodeVar(
+      ethnic_v0_recode,
+      c(
+        NA,
+        "asian",
+        "black",
+        "other",
+        "white"),
+      c(NA, 'Non-white', 'Non-white', 'Non-white', 'White')),
+    alh = recodeVar(
+      alcohol_v0,
+      c(
+        "Prefer not to answer",
+        "Daily or almost daily",
+        "Three or four times a week",
+        "Once or twice a week",
+        "One to three times a month",
+        "Special occasions only",
+        "Never"),
+      c(NA, '>4', '3-4', '1-2', '<1', '<1', '<1')),
+    birth_season = factor(ifelse(birth_month_num>=3 & birth_month_num<=5, "spring", 
+                                 ifelse(birth_month_num>=6 & birth_month_num<=8, "summer", 
+                                        ifelse(birth_month_num>=9 & birth_month_num<=11, "autumn", "winter")))),
+    smk = recode_unknow(smoke_v0),
+    PA_moderate_days_week = recode_negative(PA_moderate_days_week),
+    PA_vigorous_days_week = recode_negative(PA_vigorous_days_week),
+    pa_days_week = PA_moderate_days_week + PA_vigorous_days_week,
+    pa_g = PA_moderate_days_week > 4 | PA_vigorous_days_week > 4 | pa_days_week > 4
+  )
+
+var_row <- get_fields(c(21003, 6138, 738, 22040, 1677, 20022, 1787, 53))
+var_row$age_assess = var_row$f.21003.0.0
+var_row$education <- ifelse(grepl("A levels", var_row$f.6138.0.0, ignore.case = TRUE), "A levels",
+                            ifelse(grepl("professional", var_row$f.6138.0.0, ignore.case = TRUE), "Professional/other",
+                                   ifelse(grepl("College", var_row$f.6138.0.0, ignore.case = TRUE), "College/university", 
+                                          "Below A levels")))
+
+var_row$household <- NA
+var_row$household[var_row$f.738.0.0=='Less than 18,000']='<18,000'
+var_row$household[var_row$f.738.0.0=='18,000 to 30,999']= '18,000-30,999'
+var_row$household[var_row$f.738.0.0=='31,000 to 51,999']= '31,000-51,999'
+var_row$household[var_row$f.738.0.0=='52,000 to 100,000']= '52,000-100,000'
+var_row$household[var_row$f.738.0.0=='Greater than 100,000']= '>100,000'
+var_row$household[var_row$f.738.0.0=='']= '>100,000'
+
+var_row$MET_week = var_row$f.22040.0.0
+
+library(lubridate)
+var_row <- var_row %>%
+  mutate(
+    birth_weight = f.20022.0.0,
+    breastfed_v0 = recode_unknow(f.1677.0.0),
+    maternal_smoking_v0 = recode_unknow(f.1787.0.0),
+    survey_yr = year(f.53.0.0)
+  )
+names(var_row)
+var_row1 <- var_row[,c(1, 51:58)]
+names(var_row1)
+
+dat2 <- left_join(x=dat2, y=var_row1)
+
+fmd_disease <- get_fields(c(20107, 20110))
+fmd_disease <- fmd_disease %>%
+  mutate(
+    only_fm_hbp_v0 = fmd_all('High blood pressure'),
+    only_fm_diabetes_v0 = fmd_all('Diabetes'), 
+    only_fm_dementia_v0 = fmd_all("Alzheimer's disease/dementia"),
+    only_fm_prostate_ca_v0 = fmd_all('Prostate cancer'),
+    only_fm_depression_v0 = fmd_all('Severe depression'), 
+    only_fm_pd_v0 = fmd_all("Parkinson's disease"),
+    only_fm_bronchitis_v0 = fmd_all('Chronic bronchitis/emphysema'),
+    only_fm_breast_ca_v0 = fmd_all('Breast cancer'), 
+    only_fm_bowel_ca_v0 = fmd_all("Bowel cancer"),
+    only_fm_lung_ca_v0 = fmd_all('Lung cancer'),
+    only_fm_stroke_v0 = fmd_all('Stroke'), 
+    only_fm_heart_disease_v0 = fmd_all("Heart disease"),
+    only_fm_cvd_v0 = only_fm_hbp_v0 | only_fm_stroke_v0 | only_fm_heart_disease_v0
+  )
+
+summary(fmd_disease$only_fm_cvd_v0)
+fmd_disease_all <- names(fmd_disease)
+fmd_disease_vars <- fmd_disease_all[grepl("^only_fm_", fmd_disease_all)]
+fmd_disease_vars <- c("f.eid", fmd_disease_vars)
+
+fmd_disease1 <- fmd_disease[, fmd_disease_vars]
+
+dat2 <- left_join(x=dat2, y=fmd_disease1)
+summary(dat2$only_fm_diabetes_v0)
+
+# PRS
+source("load_ukb_prs.R")
+dat2 <- left_join(x=dat2, y=prs_id1)
+
+out_prs <- readRDS('out_prs.RDS')
+str(out_prs)
+out_prs$prs_bone_gout <- out_prs$gout_prs
+out_prs$prs_genitourinary_ckd <- out_prs$ckd_prs
+out_prs$prs_mental_behavioural_dementia <- out_prs$dementia_prs
+out_prs <- out_prs[, c("f.eid", "prs_bone_gout", "prs_genitourinary_ckd", "prs_mental_behavioural_dementia")]
+dat2 <- left_join(x=dat2, y=out_prs)
+
+dat2 <- left_join(x=dat2, y=birth_place)
+dat2 <- dat2 %>%
+  mutate(
+    north_coord = ifelse(f.129.0.0 == -1, NA, f.129.0.0),
+    east_coord = ifelse(f.130.0.0 == -1, NA, f.130.0.0),
+    north_decile = ntile(north_coord, 10), 
+    east_decile = ntile(east_coord, 10), 
+    north_decile = factor(north_decile, levels = 1:10),
+    east_decile = factor(east_decile, levels = 1:10),
+    coord_missing = ifelse(is.na(north_coord) | is.na(east_coord), 1, 0)
+  )
+
+table(dat2$north_decile, useNA = "always")
+table(dat2$east_decile, useNA = "always") 
+table(dat2$coord_missing)
+
+# mental score
+df_mental <- readRDS('mental_score.RDS')
+names(df_mental)
+df_mental <- df_mental[,c("f.eid", "mental_score_v0")]
+dat2 <- left_join(x=dat2, y=df_mental)
+
+prs_vars_all <- names(dat2)
+prs_vars <- prs_vars_all[grepl("^prs_", prs_vars_all)]
+fmd_disease_vars <- fmd_disease_vars[-1]
+adj_vars_org <- c('age_assess','sex', 'ethnic', 
+                  "education", "household", "tdi_v0",
+                  'center_v0', 'survey_yr',
+                  "north_decile", "east_decile", 'birth_place', 'birth_month',  
+                  "birth_weight", "breastfed_v0", "maternal_smoking_v0",
+                  "MET_week", "smk", "alh",
+                  "diet_scoreSES_v0","sleep_score_v0","mental_score_v0",
+                  fmd_disease_vars,
+                  prs_vars)
+fen.var <- c('sex', 'ethnic', 'education', 'household', "north_decile", "east_decile",
+             fmd_disease_vars)
+dat2[fen.var] <- lapply(dat2[fen.var], factor)
+str(dat2[fen.var])
+dat2$sex <- factor(dat2$sex, ordered = F)
+summary(dat2[adj_vars_org])
+
+# NA handle (delete)---------------------------------------------
+adj_vars_com <- c('age_assess', 'sex', 'ethnic', 'birth_place', 
+                  "north_decile", "east_decile", 'birth_month', 
+                  fmd_disease_vars,
+                  'survey_yr', 
+                  prs_vars)
+dat6 <- dat2[complete.cases(dat2[,adj_vars_com]),]
+dim(dat6) # 60768
