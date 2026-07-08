@@ -1,0 +1,148 @@
+# Internal validation ----------------------------------------
+# Exposure #
+dat3$sugar_ex_gro <- factor(
+  ifelse(
+    (dat3$birth_year > 1954) | 
+      (dat3$birth_year == 1954 & as.numeric(dat3$birth_month) >= 7),
+    "Unexposed",
+    ifelse(
+      (dat3$birth_year == 1954 & as.numeric(dat3$birth_month) <= 6) |
+        (dat3$birth_year == 1953 & as.numeric(dat3$birth_month) >= 10),
+      "In_Utero_Only",
+      ifelse(
+        (dat3$birth_year == 1953 & as.numeric(dat3$birth_month) <= 9) |
+          (dat3$birth_year == 1952 & as.numeric(dat3$birth_month) >= 10),
+        "In_Utero_Post1yr",
+        "In_Utero_Post2yr"
+      )
+    )
+  ),
+  levels = c("Unexposed", "In_Utero_Only", "In_Utero_Post1yr", "In_Utero_Post2yr"),
+  ordered = FALSE
+)
+
+dat3$sugar_ex_ordered <- ifelse(dat3$sugar_ex_gro == "Unexposed", 0,
+                                ifelse(dat3$sugar_ex_gro == "In_Utero_Only", 1,
+                                       ifelse(dat3$sugar_ex_gro == "In_Utero_Post1yr", 2, 3)))
+table(dat3$sugar_ex_gro)
+table(dat3$sugar_ex_ordered)
+dat3$sugar_ex_ordered <- as.numeric(dat3$sugar_ex_ordered)
+
+# Covariate
+dat3$birth_month <- factor(dat3$birth_month, 
+                           levels = month.name,  
+                           ordered = TRUE)
+summary(dat3$birth_month)
+dat3 <- dat3 %>% 
+  mutate(
+    ethnic = recodeVar(
+      ethnic_v0_recode,
+      c(
+        NA,
+        "asian",
+        "black",
+        "other",
+        "white"),
+      c(NA, 'Non-white', 'Non-white', 'Non-white', 'White')))
+
+dat3 <- left_join(x=dat3, y=var_row1)
+dat3 <- left_join(x=dat3, y=fmd_disease1)
+dat3 <- left_join(x=dat3, y=prs_id1)
+dat3 <- left_join(x=dat3, y=out_prs)
+dat3 <- left_join(x=dat3, y=birth_place)
+dat3 <- dat3 %>% left_join(outcome_all)
+
+prs_vars_all <- names(dat3)
+prs_vars <- prs_vars_all[grepl("^prs_", prs_vars_all)]
+fmd_disease_vars <- fmd_disease_vars[-1]
+fen.var <- c('sex', "ethnic",
+             fmd_disease_vars)
+dat3[fen.var] <- lapply(dat3[fen.var], factor)
+str(dat3[fen.var])
+dat3$sex <- factor(dat3$sex, ordered = F)
+
+# NA handle (delete) #
+adj_vars_select <- c('sex', 'ethnic', 'birth_month', 
+                     fmd_disease_vars,
+                     'survey_yr', 
+                     prs_vars)
+dat4 <- dat3[complete.cases(dat3[,adj_vars_select]),]
+dim(dat4) # 6232
+dat4$sugar.g2 <- factor(ifelse(dat4$sugar_ex_gro == "Unexposed", 0, 1))
+
+# Match (sex&race) #
+library(dplyr)
+dat6_prop <- dat6 %>%
+  group_by(sex, ethnic) %>%
+  summarise(n_dat6 = n(), .groups = 'drop') %>%
+  mutate(prop_dat6 = n_dat6 / sum(n_dat6))
+dat4_counts <- dat4 %>%
+  group_by(sex, ethnic) %>%
+  summarise(n_dat4 = n(), .groups = 'drop')
+
+matching_table <- inner_join(dat6_prop, dat4_counts, by = c("sex", "ethnic"))
+
+matching_table$ratio <- matching_table$n_dat4 / matching_table$prop_dat6
+max_possible <- floor(min(matching_table$ratio, na.rm = TRUE))
+
+matching_table$target <- floor(matching_table$prop_dat6 * max_possible)
+matching_table$target <- pmin(matching_table$target, matching_table$n_dat4)
+
+set.seed(123)
+dat4_list <- list()
+for(i in 1:nrow(matching_table)) {
+  if(matching_table$target[i] > 0) {
+    samples <- dat4 %>%
+      filter(sex == matching_table$sex[i],
+             ethnic == matching_table$ethnic[i])
+    
+    if(nrow(samples) >= matching_table$target[i]) {
+      selected <- samples[sample(1:nrow(samples), matching_table$target[i]), ]
+      dat4_list[[i]] <- selected
+    }
+  }
+}
+
+dat4_match <- bind_rows(dat4_list)
+
+print(table(dat6$sex))
+print(table(dat4_match$sex))
+print(table(dat6$ethnic))
+print(table(dat4_match$ethnic))
+
+# analysis
+dat4_match$survey_yr_centered <- scale(dat4_match$survey_yr, center = TRUE, scale = FALSE)
+fit_Infections1 <- flexsurvreg(
+  Surv(followup_fo_birth_Diseases_of_Infections/365.25, outcome_fo_birth_Diseases_of_Infections) ~ 
+    sugar_ex_gro + sex + ethnic + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    birth_month + survey_yr_centered,
+  data = dat4_match,
+  dist = "gompertz"
+)
+results_models <- list()
+
+results_models[[1]] <- calculate_results(fit_Infections1, "Infections")
+
+# cancer
+fit_cancer1 <- flexsurvreg(
+  Surv(followup_fo_birth_cancer/365.25, outcome_fo_birth_cancer) ~ 
+    sugar_ex_gro + sex + ethnic + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    only_fm_prostate_ca_v0 + only_fm_breast_ca_v0 + only_fm_bowel_ca_v0 + only_fm_lung_ca_v0 +
+    birth_month + survey_yr_centered + 
+    prs_cancer_BC + prs_cancer_CRC + prs_cancer_PC + prs_cancer_EOC,
+  data = dat4_match,
+  dist = "gompertz"
+)
+results_models[[2]] <- calculate_results(fit_cancer1, "Cancer")
+
+# blood
+fit_blood1 <- flexsurvreg(
+  Surv(followup_fo_birth_Blood_and_immune_disorders/365.25, outcome_fo_birth_Blood_and_immune_disorders) ~ 
+    sugar_ex_gro + sex + ethnic + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    birth_month + survey_yr_centered + 
+    prs_blood_immune_SLE,
+  data = dat4_match,
+  dist = "gompertz"
+)
+results_models[[3]] <- calculate_results(fit_blood1, "Blood")
+
