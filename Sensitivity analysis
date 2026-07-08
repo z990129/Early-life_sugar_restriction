@@ -1,0 +1,125 @@
+# Sensitivity analysis ------------------------------------------------
+var_birth <- c("breastfed_v0", "maternal_smoking_v0", "birth_weight")
+summary(dat6[var_birth])
+dat7 <- dat6[complete.cases(dat6[,var_birth]),]
+dim(dat7) # 30714
+
+fit_Infections1 <- flexsurvreg(
+  Surv(followup_fo_birth_Diseases_of_Infections/365.25, outcome_fo_birth_Diseases_of_Infections) ~ 
+    sugar_ex_gro + sex + ethnic + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    birth_month + survey_yr_centered + breastfed_v0 + maternal_smoking_v0 + birth_weight,
+  data = dat7,
+  dist = "gompertz"
+)
+results_models <- list()
+results_models[[1]] <- calculate_results(fit_Infections1, "Infections")
+
+fit_cancer1 <- flexsurvreg(
+  Surv(followup_fo_birth_cancer/365.25, outcome_fo_birth_cancer) ~ 
+    sugar_ex_gro + sex + ethnic + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    only_fm_prostate_ca_v0 + only_fm_breast_ca_v0 + only_fm_bowel_ca_v0 + only_fm_lung_ca_v0 +
+    birth_month + survey_yr_centered + breastfed_v0 + maternal_smoking_v0 + birth_weight + 
+    prs_cancer_BC + prs_cancer_CRC + prs_cancer_PC + prs_cancer_EOC,
+  data = dat7,
+  dist = "gompertz"
+)
+results_models[[2]] <- calculate_results(fit_cancer1, "Cancer")
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+
+var_adult <- c('education', 'household', 'tdi_v0', 
+               'diet_scoreSES_v0', 'alh', 'smk', 
+               'pa_g', 'mental_score_v0', "sleep_score_v0")
+summary(dat6[var_adult])
+dat8 <- dat6[complete.cases(dat6[,var_adult]),]
+dim(dat8) # 51621
+dat8$pa_g <- as.factor(dat8$pa_g)
+
+fit_Infections1 <- flexsurvreg(
+  Surv(followup_fo_birth_Diseases_of_Infections/365.25, outcome_fo_birth_Diseases_of_Infections) ~ 
+    sugar_ex_gro + sex + ethnic + only_fm_diabetes_v0 + only_fm_cvd_v0 +
+    birth_month + survey_yr_centered + education + household + tdi_v0 + 
+    alh + smk + pa_g + diet_scoreSES_v0 + mental_score_v0 + sleep_score_v0,
+  data = dat8,
+  dist = "gompertz"
+)
+results_models <- list()
+
+results_models[[1]] <- calculate_results(fit_Infections1, "Infections")
+
+fit_cancer1 <- flexsurvreg(
+  Surv(followup_fo_birth_cancer/365.25, outcome_fo_birth_cancer) ~ 
+    sugar_ex_gro + sex + ethnic + only_fm_diabetes_v0 + only_fm_cvd_v0 + 
+    only_fm_prostate_ca_v0 + only_fm_breast_ca_v0 + only_fm_bowel_ca_v0 + only_fm_lung_ca_v0 +
+    birth_month + survey_yr_centered + education + household + tdi_v0 + 
+    alh + smk + pa_g + diet_scoreSES_v0 + mental_score_v0 + sleep_score_v0 + 
+    prs_cancer_BC + prs_cancer_CRC + prs_cancer_PC + prs_cancer_EOC,
+  data = dat8,
+  dist = "gompertz"
+)
+results_models[[2]] <- calculate_results(fit_cancer1, "Cancer")
+
+all_results <- do.call(rbind, results_models)
+all_results$p_fdr <- p.adjust(p = all_results$P_Value, method = 'BH')
+write.csv(all_results, 'sensitivity/adj_adult.csv')
+
+
+# Stratified analysis ----------------------
+summary(dat6$birth_season)
+dat6$birth_place.g2 <- ifelse(dat6$birth_place == "England", "England", "Scotland/Wales")
+summary(dat6[prs_var_use])
+convert_prs_to_categories <- function(data, var_name, reverse = FALSE) {
+  original_var <- data[[var_name]]
+  q20 <- quantile(original_var, probs = 0.2, na.rm = TRUE)
+  q80 <- quantile(original_var, probs = 0.8, na.rm = TRUE)
+  
+  if (!reverse) {
+    factor(
+      case_when(
+        original_var <= q20 ~ "low",
+        original_var > q20 & original_var <= q80 ~ "medium",
+        original_var > q80 ~ "high",
+        TRUE ~ NA_character_
+      ),
+      levels = c("low", "medium", "high")
+    )
+  } else {
+    factor(
+      case_when(
+        original_var <= q20 ~ "high",
+        original_var > q20 & original_var <= q80 ~ "medium",
+        original_var > q80 ~ "low",
+        TRUE ~ NA_character_
+      ),
+      levels = c("low", "medium", "high")
+    )
+  }
+}
+
+for (var in prs_var_use) {
+  reverse_flag <- (var == "prs_genitourinary_ckd")
+  dat6[[paste0(var, ".c")]] <- convert_prs_to_categories(dat6, var, reverse = reverse_flag)
+}
+
+infect_f1<-cox.analysis.stratifed.f.X_feng_cen_da_yu_2(X = "sugar.g2",Y = "outcome_fo_birth_Diseases_of_Infections",
+                                                    TIME = "Infections_yr",
+                                                    stratifed1="sex",
+                                                    adj =adj_vars_infect2[-1],data = dat6,N = 2)
+infect_f2<-cox.analysis.stratifed.f.X_feng_cen_da_yu_2(X = "sugar.g2",Y = "outcome_fo_birth_Diseases_of_Infections",
+                                                       TIME = "Infections_yr",
+                                                       stratifed1="ethnic",
+                                                       adj =adj_vars_infect2[-2],data = dat6,N = 2)
+infect_f3<-cox.analysis.stratifed.f.X_feng_cen_da_yu_2(X = "sugar.g2",Y = "outcome_fo_birth_Diseases_of_Infections",
+                                                       TIME = "Infections_yr",
+                                                       stratifed1="birth_place.g2",
+                                                       adj =adj_vars_infect2[-3],data = dat6,N = 2)
+infect_f4<-cox.analysis.stratifed.f.X_feng_cen_da_yu_2(X = "sugar.g2",Y = "outcome_fo_birth_Diseases_of_Infections",
+                                                       TIME = "Infections_yr",
+                                                       stratifed1="birth_season",
+                                                       adj =adj_vars_infect2[-8],data = dat6,N = 2)
+infect_in <- rbind(infect_f1,infect_f2,infect_f3,infect_f4)
+
+tab_in <- rbind(infect_in,cancer_in,blood_in,mental_in,nervous_in,ear_in,skin_in,bone_in,digestive_in,genitourinary_in,death_in)
+tab_in$p_interaction_bh <- p.adjust(p = tab_in$p_interaction, method = 'BH')
+
