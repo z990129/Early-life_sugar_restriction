@@ -1,1 +1,162 @@
+# ELSA w1-9 (2002-2018)
+
+library(haven)   
+library(dplyr)   
+library(lubridate) 
+library(purrr)      
+library(stringr)
+
+source("ELSA_assignment_02_to_18.R")
+df3<-df2%>%transmute(
+  idauniq = as.character(idauniq),
+  age,
+  born_place = factor(born_place),
+  adopted = factor(recodeVar(adopted,c(1,2,3,4,5,9,-8,6,7,8),c(0,0,0,0,0,0,1,1,1,1))),
+  byr = as.numeric(byr),
+  sex = factor(sex),
+  race = factor(race),
+  r1iwindy = as.numeric(r1iwindy), 
+  r2iwindy = as.numeric(r2iwindy), 
+  r3iwindy = as.numeric(r3iwindy), 
+  r4iwindy = as.numeric(r4iwindy), 
+  r5iwindy = as.numeric(r5iwindy), 
+  r6iwindy = as.numeric(r6iwindy), 
+  r7iwindy = as.numeric(r7iwindy), 
+  r8iwindy = as.numeric(r8iwindy), 
+  r9iwindy = as.numeric(r9iwindy),
+  syr = as.numeric(syr),
+  last_syr = as.numeric(last_syr),
+  edu = factor(recodeVar(edu,c(1,3,4,5,-15),c(0,0,1,1,0))),
+  marrige = factor(recodeVar(marrige,c(1,3,4,5,7,8),c(1,1,0,0,0,0))),
+  wealth,
+  wealth1 = factor(wealth1),
+  smoke = factor(smoke),
+  drink = factor(drink),
+  activity = factor(activity),
+  out_depression1,
+  out_depression2,
+  out_depression3,
+  out_depression4,
+  out_depression5,
+  out_depression6,
+  out_depression7,
+  out_depression8,
+  out_depression9,
+  
+  report_psy1,
+  report_psy2,
+  report_psy3,
+  report_psy4,
+  report_psy5,
+  report_psy6,
+  report_psy7,
+  report_psy8,
+  report_psy9
+)
+str(df3)
+summary(df3)
+table(df3$edu)
+
+# depression-----------------------------------------------------------
+dep_cols <- grep("^out_depression", names(df3), value = TRUE)
+df_sugar <- df3%>%
+  mutate(
+    outcome_depression = if_else(
+      rowSums(!is.na(.[dep_cols])) == 0,
+      NA,
+      rowSums(.[dep_cols] == TRUE, na.rm = TRUE) > 1
+    ),
+    
+    followup_depression = if_else(
+      is.na(outcome_depression),       
+      NA_real_,                   
+      case_when(                  
+        out_depression1 == T &idauniq %in% id1 ~ unclass(r1iwindy -byr),
+        out_depression2 == T &idauniq %in% id2 ~ unclass(r2iwindy -byr),
+        out_depression3 == T &idauniq %in% id3 ~ unclass(r3iwindy -byr),
+        out_depression4 == T &idauniq %in% id4 ~ unclass(r4iwindy -byr),
+        out_depression5 == T &idauniq %in% id5 ~ unclass(r5iwindy -byr),
+        out_depression6 == T &idauniq %in% id6 ~ unclass(r6iwindy -byr),
+        out_depression7 == T &idauniq %in% id7 ~ unclass(r7iwindy -byr),
+        out_depression8 == T &idauniq %in% id8 ~ unclass(r8iwindy -byr),
+        out_depression9 == T &idauniq %in% id9 ~ unclass(r9iwindy -byr),
+        TRUE ~ unclass(last_syr - byr)
+      )
+    )
+  )
+summary(df_sugar$outcome_depression)#T6189
+summary(df_sugar$followup_depression)
+
+# exclude-------------------------------------------------------------------------
+data1 <- df_sugar %>%
+  filter(byr >= 1951 & byr <= 1956)#3346
+table(data1$byr)
+
+summary(data1$born_place)
+data2 <- data1 %>%
+  filter(born_place == 1)#2921
+
+data3 <- data2 %>%
+  filter(adopted == 0)##2874
+
+data4 <- data3 %>% filter(!is.na(sex)) %>% filter(!is.na(race)) %>%
+  filter(!is.na(syr)) %>% filter(!is.na(edu))%>% filter(!is.na(marrige))#2849
+
+
+# exposure----------------------------------------------------------------------
+df_sugar2<- data4 %>%
+  mutate(stage = factor(ifelse(byr >=1954,"unexposed","exposed"),
+                        levels = c("unexposed","exposed"),
+                        ordered = FALSE)
+  )
+summary(df_sugar2$stage)
+
+# baseline -------------------------------------------------------------
+t1data<-df_sugar2
+summary(t1data$age)
+library(epiDisplay)
+tab1_vars <- c("age","sex","race", "edu","wealth",
+               "marrige", "smoke", "drink",
+               "activity")
+str(t1data[tab1_vars])
+
+library(tableone)
+t1 <- CreateTableOne(tab1_vars, 'stage', t1data, includeNA = F, addOverall = TRUE)
+tab1 <- print(t1,
+              contDigits  = 1,     
+              catDigits   = 1,     
+              showAllLevels = T   
+) 
+
+
+# cox --------------------------------------------------------------------------------
+adj1 <- c("sex","race","syr")
+adj2 <- c("sex","race","syr","edu","marrige")
+summary(df_sugar2[adj2])
+
+## depression ##
+summary(df_sugar2$outcome_depression)
+summary(df_sugar2$followup_depression)
+
+df_sugar3 <- df_sugar2 %>% filter(!is.na(outcome_depression))#2786 
+#stage2 N/person year
+py_F <- sum(df_sugar3$followup_depression[df_sugar3$stage == "unexposed"])
+print(py_F) #75678
+py_T <- sum(df_sugar3$followup_depression[df_sugar3$stage == "exposed"])
+print(py_T) #89055
+events_F <- sum(df_sugar3$outcome_depression[df_sugar3$stage == "unexposed"]==1)#405   197
+events_T <- sum(df_sugar3$outcome_depression[df_sugar3$stage == "exposed"]==1)#460   204
+
+library(survival)
+df_sugar2 <- as.data.frame(df_sugar2)
+fit1 <- cox.analysis.f(X1=c("stage"),
+                       Y = "outcome_depression",time = "followup_depression",
+                       adj =adj1,Data = df_sugar2,N = 2)
+
+fit2 <- cox.analysis.f(X1=c("stage"),
+                       Y = "outcome_depression",time = "followup_depression",
+                       adj =adj2,Data = df_sugar2,N = 2)
+
+fit_dep<-cbind(fit1,fit2)
+
 
