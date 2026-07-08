@@ -1,1 +1,108 @@
+sugar_data <- db_demo(ageyr = 'age',sex = 'sex', eth1 = 'race',
+                      edu = 'education', poverty = 'poor', wtmec2yr = T,
+                      years = 2007:2018)
+disease <- nhs_tsv('mcq', years = 2007:2018)
+infect <- nhs_tsv('hsq', years = 2007:2018)
+slep <- nhs_tsv('slq', years = 2007:2018)
+ear <- nhs_tsv('auq', years = 2007:2018)
+
+disease_df <- nhs_read(disease,
+                  'mcq053:anemia','mcq220:cancer','mcq200:stomach','mcq160l:liver','mcq160n:gout',
+                  infect,
+                  'hsq520:infect',
+                  slep,
+                  'slq060:sleep',
+                  ear,
+                  'auq156:hear'
+                  )
+table(disease_df)
+sugar_data <- diag_CKD(data = sugar_data, years = 2007:2018)
+table(sugar_data$CKD)
+sugar_data <- Inner_Join(sugar_data, disease_df)
+names(sugar_data)
+
+demo <- nhs_tsv('demo', years = 2007:2018)
+born_df <- nhs_read(demo,
+                    'dmdborn4:born_in')
+table(born_df$born_in)
+sugar_data <- Inner_Join(sugar_data, born_df)
+
+fen.vars<-c('sex', 'race', 'education',"CKD","anemia",
+            'cancer','liver','gout','infect','sleep','hear','born_in')
+
+sugar_data[fen.vars]<-lapply(sugar_data[fen.vars], factor)
+str(sugar_data)
+summary(sugar_data)
+dim(sugar_data)
+sugar_data1 <- filter(sugar_data, sugar_data$born_in == "Born in 50 US states or Washington, DC")
+dim(sugar_data1) # 29423
+summary(sugar_data1$age)
+
+sugar_data1$survey_year <- as.numeric(substr(sugar_data1$Year.x, 1, 4))
+sugar_data1$birth_year <- sugar_data1$survey_year - sugar_data1$age
+sugar_data1$birth_month <- 7 
+sugar_data1$birth_date <- as.Date(paste0(sugar_data1$birth_year, "-", 
+                                         sugar_data1$birth_month, "-01"))
+start_date <- as.Date("1951-10-01")
+end_date <- as.Date("1956-03-31")
+
+sugar_data2 <- sugar_data1[sugar_data1$birth_date >= start_date & 
+                                sugar_data1$birth_date <= end_date, ]
+dim(sugar_data2)
+
+cutoff_date <- as.Date("1954-07-01")
+
+sugar_data2$sugar.g2 <- ifelse(sugar_data2$birth_date <= cutoff_date, 
+                                  "Yes", "No")
+
+table(sugar_data2$sugar.g2)
+
+summary(sugar_data2$birth_year)
+table(sugar_data2$birth_year)
+
+names(sugar_data2)
+sugar_data2$sugar.g2 <- factor(sugar_data2$sugar.g2)
+summary(sugar_data2[c("anemia","cancer","liver","gout","infect","sleep", "CKD")])
+summary(sugar_data2$sex)
+summary(sugar_data2$race)
+summary(sugar_data2$sugar.g2)
+
+run_logistic_regression <- function(outcome_var) {
+  temp_data <- sugar_data2[, c("sugar.g2", outcome_var, "sex", "race")]
+  temp_data <- na.omit(temp_data)
+  
+  formula <- as.formula(paste(outcome_var, "~ sugar.g2 + sex + race"))
+  model <- glm(formula, data = temp_data, family = binomial())
+  
+  summary_table <- summary(model)$coefficients
+  
+  or <- exp(coef(model)["sugar.g2Yes"])
+  ci <- exp(confint(model)["sugar.g2Yes", ])
+  p_value <- summary_table["sugar.g2Yes", "Pr(>|z|)"]
+  n_obs <- nobs(model)
+  
+  return(data.frame(
+    Outcome = outcome_var,
+    OR = round(or, 3),
+    CI_lower = round(ci[1], 3),
+    CI_upper = round(ci[2], 3),
+    P_value = ifelse(p_value < 0.001, "<0.001", round(p_value, 3)),
+    N = n_obs,
+    stringsAsFactors = FALSE
+  ))
+}
+
+outcome_vars <- c("anemia", "cancer", "liver", "gout", "infect", "sleep","CKD")
+
+results <- data.frame()
+for (var in outcome_vars) {
+  tryCatch({
+    result <- run_logistic_regression(var)
+    results <- rbind(results, result)
+  }, error = function(e) {
+    cat("Error with variable", var, ":", e$message, "\n")
+  })
+}
+
+print(results)
 
